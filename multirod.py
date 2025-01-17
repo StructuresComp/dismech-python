@@ -89,6 +89,8 @@ class MultiRod:
 
     """
     Implied functions
+
+    TODO: Figure out what matlab function should be incorporated
     """
 
     def update_tangent(self):

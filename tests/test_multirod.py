@@ -1,15 +1,12 @@
 import pytest
 import numpy as np
 
-import multirod
-
-import environment
-import geometry
+import dismech
 
 
 @pytest.fixture
 def dynamic_3d_sim():
-    return multirod.SimParams(static_sim=False,
+    return dismech.SimParams(static_sim=False,
                               two_d_sim=False,
                               use_mid_edge=False,
                               use_line_search=False,
@@ -27,7 +24,7 @@ def dynamic_3d_sim():
 
 @pytest.fixture
 def static_2d_sim():
-    return multirod.SimParams(static_sim=True,
+    return dismech.SimParams(static_sim=True,
                               two_d_sim=True,
                               use_mid_edge=False,
                               use_line_search=False,
@@ -48,7 +45,7 @@ def rod_cantilever_geom():
     b = 0.02
     h = 0.001
 
-    return geometry.GeomParams(rod_r0=0.001,
+    return dismech.GeomParams(rod_r0=0.001,
                                shell_h=0,
                                axs=b*h,
                                ixs1=b*h**3/12,
@@ -58,7 +55,7 @@ def rod_cantilever_geom():
 
 @pytest.fixture
 def rod_cantilever_material():
-    return multirod.Material(density=1200,
+    return dismech.Material(density=1200,
                              youngs_rod=2e6,
                              youngs_shell=0,
                              poisson_rod=0.5,
@@ -67,7 +64,7 @@ def rod_cantilever_material():
 
 @pytest.fixture
 def free_fall_env():
-    env = environment.Environment()
+    env = dismech.Environment()
     env.add_force('gravity', g=np.array([0.0, 0.0, -9.81]))
 
 

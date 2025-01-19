@@ -1,0 +1,14 @@
+[build-system]
+requires = ["setuptools"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "dismech"
+dynamic = ["version"]
+dependencies = ["numpy", "scipy"]
+
+# for pytest
+[tool.pytest.ini_options]
+addopts = [
+    "--import-mode=importlib",
+]

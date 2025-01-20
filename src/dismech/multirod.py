@@ -3,7 +3,18 @@ import functools
 
 import numpy as np
 
-from . import environment
+from . import environment, geometry
+
+
+@dataclasses.dataclass
+class GeomParams:
+    rod_r0: float
+    shell_h: float
+
+    axs: float = None
+    jxs: float = None
+    ixs1: float = None
+    ixs2: float = None
 
 
 @dataclasses.dataclass
@@ -33,25 +44,11 @@ class SimParams:
     dtol: float
 
 
-@dataclasses.dataclass
-class GeomParams:
-    rod_r0: float
-    shell_h: float
-
-    axs: float = None
-    jxs: float = None
-    ixs1: float = None
-    ixs2: float = None
-
-
 class MultiRod:
 
     def __init__(self, geom: GeomParams, material: Material,
-                 twist_angles: np.ndarray, nodes: np.ndarray, edges,
-                 rod_nodes, shell_nodes,
-                 rod_edges, shell_edges, rod_shell_joint_edges,
-                 rod_shell_joint_total_edges, face_nodes, sign_faces,
-                 face_edges, sim_params: SimParams, environment: environment.Environment):
+                 geo: geometry.Geometry, sim_params: SimParams,
+                 environment: environment.Environment):
         # Store important parameters as local vars for symmetry
         self.__r0 = geom.rod_r0
         self.__h = geom.shell_h
@@ -59,38 +56,43 @@ class MultiRod:
         self.__nu_shell = material.poisson_shell
 
         # Node and edge counts
-        self.__n_rod_nodes = np.size(rod_nodes, 0)
-        self.__n_shell_nodes = np.size(shell_nodes, 0)
+        self.__n_rod_nodes = np.size(geo.rod_nodes, 0)
+        self.__n_shell_nodes = np.size(geo.shell_nodes, 0)
         self.__n_nodes = self.__n_rod_nodes + self.__n_shell_nodes
-        self.__n_edges_rod_only = np.size(rod_edges, 0)
-        self.__n_edges_shell_only = np.size(shell_edges, 0)
-        n_edges_rod_shell_joint_total = np.size(rod_shell_joint_total_edges, 0)
-        self.__n_edges = np.size(edges, 0)
+        self.__n_edges_rod_only = np.size(geo.rod_edges, 0)
+        self.__n_edges_shell_only = np.size(geo.shell_edges, 0)
+        n_edges_rod_shell_joint_total = np.size(
+            geo.rod_shell_joint_edges_total, 0)
+        self.__n_edges = np.size(geo.edges, 0)
         self.__n_edges_dof = self.__n_edges_rod_only + n_edges_rod_shell_joint_total
-        self.__n_faces = np.size(face_nodes, 0)
+        self.__n_faces = np.size(geo.face_nodes, 0)
 
         # Store node and edges
-        self.__nodes = nodes
-        self.__edges = edges
-        self.__face_nodes_shell = face_nodes
+        self.__nodes = geo.nodes
+        self.__edges = geo.edges
+        self.__face_nodes_shell = geo.face_nodes
+
+        # Twist angle can be defined inside __init__
+        self.__twist_angles = np.zeros(
+            self.__n_edges_rod_only + self.__n_edges_shell_only)
 
         # DOF vector
         self.__n_dof = 3 * self.__n_nodes + \
             self.__n_edges_rod_only + n_edges_rod_shell_joint_total
         self.__q0 = np.zeros(self.__n_dof)
-        self.__q_nodes = np.reshape(nodes, [nodes.size, 1])
-        self.__q0[1:3 * self.__n_nodes] = self.__q_nodes
-        self.__q0[3 * self.__n_nodes + 1:3 *
-                  self.__n_nodes + self.__n_edges_dof] = twist_angles
+        self.__q_nodes = geo.nodes.flatten()
+        self.__q0[:3 * self.__n_nodes] = self.__q_nodes
+        self.__q0[3 * self.__n_nodes:3 *
+                  self.__n_nodes + self.__n_edges_dof] = self.__twist_angles
 
         if sim_params.use_mid_edge:
             self.__n_dof += self.__n_edges_shell_only
             self.__q0 = np.concat(
                 self.__q0, np.zeros(self.__n_edges_shell_only))
 
-        # References handled by cached properties
+        # References and mass matrix handled by cached properties
 
-        # Mass matrix is a cached property
+        self.__mass_matrix = self.get_mass_matrix(geom)
 
         # Weight
         self.__fg = self.get_gravity(environment)
@@ -130,17 +132,17 @@ class MultiRod:
 
         # other properties
         self.__edge_combos = self.construct_possible_edge_combos(
-            np.concat(rod_edges, rod_shell_joint_edges))
+            np.concat(geo.rod_edges, geo.rod_shell_joint_edges) if geo.rod_shell_joint_edges.size else geo.rod_edges)
         self.__u = np.zeros(self.__q0.size)
-        self.__a1 = np.zeros(self.__n_edges_dof, 3)
-        self.__a2 = np.zeros(self.__n_edges_dof, 3)
-        self.__m1 = np.zeros(self.__n_edges_dof, 3)
-        self.__m2 = np.zeros(self.__n_edges_dof, 3)
+        self.__a1 = np.zeros((self.__n_edges_dof, 3))
+        self.__a2 = np.zeros((self.__n_edges_dof, 3))
+        self.__m1 = np.zeros((self.__n_edges_dof, 3))
+        self.__m2 = np.zeros((self.__n_edges_dof, 3))
 
         # Store additional shell face info if using midedge
         if sim_params.use_mid_edge:
-            self.__face_edges = face_edges
-            self.__sign_faces = sign_faces
+            self.__face_edges = geo.face_edges
+            self.__sign_faces = geo.sign_faces
             # TODO: init stuff
         else:
             self.__face_edges = np.empty(0)
@@ -152,30 +154,86 @@ class MultiRod:
 
     @functools.cached_property
     def ref_len(self):
-        # TODO: Make it a list comprehension
-        ret = np.zero(self.__n_edges)
+        temp = []
         for i in range(self.__n_edges):
-            n1 = self.__edges[i, 1]
-            n2 = self.edges[i, 2]
-            ret[i] = np.linalg.norm(self.__nodes[n2, :] - self.__nodes[n1, :])
-        return ret
+            n1, n2 = self.__edges[i]
+            temp.append(np.linalg.norm(self.__nodes[n1] - self.__nodes[n2]))
+        return np.stack(temp, axis=-1)
 
     @functools.cached_property
     def voronoi_ref_len(self):
-        pass
+        ret = np.zeros(self.__n_nodes)
+        for i in range(self.__n_edges_dof):
+            n1, n2 = self.__edges[i]
+            ret[n1] += 0.5 * self.ref_len[i]
+            ret[n2] += 0.5 * self.ref_len[i]
+        return ret
 
     @functools.cached_property
     def voronoi_area(self):
-        pass
+        if self.__face_nodes_shell.size:
+            ret = np.zeros(self.__n_nodes)
+            for n1, n2, n3 in range(self.__face_nodes_shell):
+                face_A = 0.5 * np.linalg.norm(np.linalg.cross(
+                    self.__nodes[n2] - self.__nodes[n1], self.__nodes[n3] - self.__nodes[n2]))
+                ret[n1] += face_A / 3
+                ret[n2] += face_A / 3
+                ret[n3] += face_A / 3
+            return ret
+        return np.empty(0)
 
     @functools.cached_property
     def face_area(self):
-        pass
+        temp = []
+        for i in range(self.__n_faces):
+            n1, n2, n3 = self.__face_nodes_shell[i]
+            temp.append(0.5 * np.linalg.norm(np.linalg.cross(
+                self.__nodes[n2] - self.__nodes[n1], self.__nodes[n3] - self.__nodes[n2])))
+        return np.stack(temp, axis=-1) if len(temp) else np.empty(0)
 
-    @functools.cached_property
+    @property
     def mass_matrix(self):
-        pass
+        """
+        mass matrix associated with initial geom
+        """
+        return self.__mass_matrix
 
+    def get_mass_matrix(self, geom: GeomParams):
+        """
+        generate a mass matrix for specified parameters
+        """
+        m = np.zeros(self.__n_dof)
+
+        # shell faces
+        for i in range(self.__n_faces):
+            n1, n2, n3 = self.__face_nodes_shell[i]
+            face_A = 0.5 * np.linalg.norm(np.linalg.cross(
+                self.__nodes[n2] - self.__nodes[n1], self.__nodes[n3] - self.__nodes[n2]))
+            mface = self.__rho * face_A * self.__h
+
+            m[self.map_node_to_dof(n1)] += mface / 3 * np.ones(3)
+            m[self.map_node_to_dof(n2)] += mface / 3 * np.ones(3)
+            m[self.map_node_to_dof(n3)] += mface / 3 * np.ones(3)
+
+        # rod nodes
+        for i in range(self.__n_nodes):
+            if geom.axs is not None:
+                dm = self.voronoi_ref_len[i] * geom.axs * self.__rho
+            else:
+                dm = self.voronoi_ref_len[i] * \
+                    np.pi * self.__r0 ** 2 * self.__rho
+            m[self.map_node_to_dof(i)] += dm * np.ones(3)
+
+        # Rod edges
+        for i in range(self.__n_edges_dof):
+            if geom.axs is not None:
+                dm = self.ref_len[i] * geom.axs * self.__rho
+            else:
+                dm = self.refLen[i] * np.pi * self.__r0 ** 2 * self.__rho
+            m[self.map_edge_to_dof(i)] = dm / 2 * self.__r0 ** 2
+        return np.diag(m)
+
+    # TODO:
     def init_curvature_midedge(self):
         pass
 
@@ -184,8 +242,19 @@ class MultiRod:
         pass
 
     @staticmethod
-    def construct_possible_edge_combos(edges):
-        pass
+    def construct_possible_edge_combos(edges: np.ndarray):
+        idx = [np.array([0, 0])]  # jugaad
+
+        for i in range(n_edges := np.size(edges, 0)):
+            for j in range(n_edges):
+                temp_combo = np.array([i, j])
+                if not (edges[i, 0] == edges[j, 0] or edges[i, 0] == edges[j, 1] or edges[i, 1] == edges[j, 0] or edges[i, 1] == edges[j, 1]) and \
+                        not any([(n1 == i and n2 == j) or (n1 == j and n2 == i) for (n1, n2) in idx]):
+                    idx.append(np.array([i, j]))
+
+        edge_combos = np.zeros((idx_count := (np.size(idx, 1)-1), 4))
+        for i in range(np.size(idx_count)):
+            edge_combos[i] = np.concat((edges[idx[i][0]], edges[idx[i][1]]))
 
     """
     Implied functions
@@ -201,13 +270,18 @@ class MultiRod:
         fg = np.zeros(self.mass_matrix.shape[0])
         for i in range(self.__n_nodes):
             ind = self.map_node_to_dof(i)
-            # TODO: add Fg(ind)
+            fg[ind] = np.diag(self.mass_matrix[np.ix_(ind, ind)]) * g_adjusted
         return fg
 
     @staticmethod
     def map_node_to_dof(node_num: int) -> np.ndarray:
-        # FIXME: Column vector??
-        return np.array([node_num * 3 - 2, node_num * 3 - 1, node_num * 3])
+        return np.array([node_num * 3, node_num * 3 + 1, node_num * 3 + 2])
+    
+    def map_edge_to_dof(self, edge_num: int) -> np.ndarray:
+        """
+        skip nodes
+        """
+        return self.__n_nodes * 3 + edge_num
 
     def update_tangent(self):
         pass

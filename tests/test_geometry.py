@@ -56,44 +56,16 @@ def validate_create_geometry(geo: dismech.Geometry, valid_data: typing.Dict[str,
 # rod cantilever
 
 
-@pytest.fixture
-def rod_cantilever_geom():
-    b = 0.02
-    h = 0.001
-
-    return dismech.GeomParams(rod_r0=0.001,
-                              shell_h=0,
-                              axs=b*h,
-                              ixs1=b*h**3/12,
-                              ixs2=h*b**3/12,
-                              jxs=b*h**3/6)
-
-
-@pytest.fixture
-def rod_cantilever_n26():
-    return dismech.Geometry.from_txt(rel_path('resources/rod_cantilever/horizontal_rod_n26.txt'))
-
-
 def test_rod_cantilever_n26_from_txt(rod_cantilever_n26):
     valid_data = scipy.io.loadmat(
         rel_path('resources/rod_cantilever/rod_cantilever_n26_create_geometry.mat'))
     validate_create_geometry(rod_cantilever_n26, valid_data)
 
 
-@pytest.fixture
-def rod_cantilever_n51():
-    return dismech.Geometry.from_txt(rel_path('resources/rod_cantilever/horizontal_rod_n51.txt'))
-
-
 def test_rod_cantilever_n51_from_txt(rod_cantilever_n51):
     valid_data = scipy.io.loadmat(
         rel_path('resources/rod_cantilever/rod_cantilever_n51_create_geometry.mat'))
     validate_create_geometry(rod_cantilever_n51, valid_data)
-
-
-@pytest.fixture
-def rod_cantilever_n101():
-    return dismech.Geometry.from_txt(rel_path('resources/rod_cantilever/horizontal_rod_n101.txt'))
 
 
 def test_rod_cantilever_n101_from_txt(rod_cantilever_n101):
@@ -103,23 +75,12 @@ def test_rod_cantilever_n101_from_txt(rod_cantilever_n101):
 
 
 # parachute
-
-@pytest.fixture
-def hexparachute_n6():
-    return dismech.Geometry.from_txt(rel_path('resources/parachute/hexparachute_n6_python.txt'))
-
-
 def test_hexparachute_n6(hexparachute_n6):
     valid_data = scipy.io.loadmat(
         rel_path('resources/parachute/hexparachute_create_geometry.mat'))
     validate_create_geometry(hexparachute_n6, valid_data)
 
 # pneunet
-
-
-@pytest.fixture
-def pneunet_shorter():
-    return dismech.Geometry.from_txt(rel_path('resources/pneunet/input_straight_horizontal_shorter.txt'))
 
 
 def test_pneunet_shorter(pneunet_shorter):

@@ -15,7 +15,9 @@ class Geometry:
     Generate, save, and load custom node geometries
     """
 
-    def __init__(self, rod_nodes, shell_nodes, rod_edges, rod_shell_joint_edges, face_nodes):
+    def __init__(self, rod_nodes: np.ndarray, shell_nodes: np.ndarray,
+                 rod_edges: np.ndarray, rod_shell_joint_edges: np.ndarray,
+                 face_nodes: np.ndarray):
         """
         acts as createGeometry.m
         """
@@ -46,6 +48,7 @@ class Geometry:
         edge_faces = np.zeros((nEdges, 2), dtype=GEOMETRY_INT)
         face_shell_edges = np.zeros((n_faces, 3), dtype=GEOMETRY_INT)
         As = np.zeros(n_faces)
+
         self.__sign_faces = np.zeros((n_faces, 3), dtype=GEOMETRY_INT)
         self.__face_unit_norms = np.zeros((3, n_faces))
 
@@ -302,6 +305,8 @@ class Geometry:
             # no need to reset temp_array
 
         return Geometry(*params)
+    
+    # Read-only properties (direct analogs to createGeometry.m output)
 
     @property
     def nodes(self):

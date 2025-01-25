@@ -42,7 +42,7 @@ def rod_cantilever_n26():
 
 @pytest.fixture
 def multirod_cantilever_n26(rod_cantilever_geom, rod_cantilever_material, rod_cantilever_n26, static_2d_sim, free_fall_env):
-    return dismech.MultiRod(rod_cantilever_geom, rod_cantilever_material, rod_cantilever_n26, static_2d_sim, free_fall_env)
+    return dismech.SoftRobot(rod_cantilever_geom, rod_cantilever_material, rod_cantilever_n26, static_2d_sim, free_fall_env)
 
 
 @pytest.fixture
@@ -51,7 +51,7 @@ def rod_cantilever_n51():
 
 @pytest.fixture
 def multirod_cantilever_n51(rod_cantilever_geom, rod_cantilever_material, rod_cantilever_n51, static_2d_sim, free_fall_env):
-    return dismech.MultiRod(rod_cantilever_geom, rod_cantilever_material, rod_cantilever_n51, static_2d_sim, free_fall_env)
+    return dismech.SoftRobot(rod_cantilever_geom, rod_cantilever_material, rod_cantilever_n51, static_2d_sim, free_fall_env)
 
 
 @pytest.fixture

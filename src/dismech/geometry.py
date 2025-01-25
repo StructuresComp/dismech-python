@@ -110,8 +110,7 @@ class Geometry:
         self.__hinges = hinges[:h_i, :]
 
         # Ghost edges for rod shell joint bent-twist springs
-        # 0 vector so first comparison is valid
-        ghost_rod_shell_joint_edges = [np.array([0, 0])]
+        ghost_rod_shell_joint_edges = [np.array([0, 0])]  # jugaad
         for i in range(n_rod_shell_joints):
             s_node = rod_shell_joint_edges[i][1]
             s_faces = []
@@ -132,7 +131,7 @@ class Geometry:
 
             ghost_rod_shell_joint_edges += list(shell_edges[s_edges])
 
-        # remove unecessary 0 vector
+        # remove jugaad
         self.__rod_shell_joint_edges_total = np.concat(
             (rod_shell_joint_edges, ghost_rod_shell_joint_edges[1:]), 0)
 
@@ -218,6 +217,11 @@ class Geometry:
                 self.__face_edges[i][j] = np.where((self.edges == [n1, n2]).all(axis=1))[0][0] \
                     if self.__sign_faces[i][j] > 0 else np.where((self.edges == [n2, n1]).all(axis=1))[0][0]
 
+        # Twist angles
+        # TODO: Make this mutable
+        self.__twist_angles = np.zeros(
+            n_rod_edges + np.size(self.shell_edges, 0))
+
     @staticmethod
     def __safe_concat(arrs: typing.Tuple[np.ndarray]) -> np.ndarray:
         """
@@ -293,7 +297,6 @@ class Geometry:
 
                     temp_array.append([float(val) for val in vals])
 
-        # TODO: wrap with function
         # add last parameter
         if len(temp_array) > 0:
             params[cur_h] = np.array(temp_array, dtype=h_dtype[cur_h])
@@ -302,10 +305,8 @@ class Geometry:
             if h_dtype[cur_h] == GEOMETRY_INT:
                 params[cur_h] -= 1
 
-            # no need to reset temp_array
-
         return Geometry(*params)
-    
+
     # Read-only properties (direct analogs to createGeometry.m output)
 
     @property
@@ -375,3 +376,7 @@ class Geometry:
     @property
     def face_unit_norms(self):
         return self.__face_unit_norms
+
+    @property
+    def twist_angles(self):
+        return self.__twist_angles

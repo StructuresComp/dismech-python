@@ -1,5 +1,5 @@
 import dataclasses
-import functools
+import typing
 
 import numpy as np
 
@@ -44,7 +44,7 @@ class SimParams:
     dtol: float
 
 
-class MultiRod:
+class SoftRobot:
 
     def __init__(self, geom: GeomParams, material: Material,
                  geo: geometry.Geometry, sim_params: SimParams,
@@ -72,9 +72,8 @@ class MultiRod:
         self.__edges = geo.edges
         self.__face_nodes_shell = geo.face_nodes
 
-        # Twist angle can be defined inside __init__
-        self.__twist_angles = np.zeros(
-            self.__n_edges_rod_only + self.__n_edges_shell_only)
+        # Twist angles from geometry
+        self.__twist_angles = geo.twist_angles
 
         # DOF vector
         self.__n_dof = 3 * self.__n_nodes + \
@@ -90,12 +89,15 @@ class MultiRod:
             self.__q0 = np.concat(
                 self.__q0, np.zeros(self.__n_edges_shell_only))
 
-        # References and mass matrix handled by cached properties
+        self.__q = self.__q0
 
-        self.__mass_matrix = self.get_mass_matrix(geom)
+        # References and mass matrix
+        self.__ref_len = self.__get_ref_len()
+        self.__voronoi_ref_len = self.__get_voronoi_ref_len()
+        self.__voronoi_area = self.__get_voronoi_area()
+        self.__faec_area = self.__get_face_area()
 
-        # Weight
-        self.__fg = self.get_gravity(environment)
+        self.__mass_matrix = self.__get_mass_matrix(geom)
 
         # Stiffnesses
         G_rod = material.youngs_rod / (2 * (1 + material.poisson_rod))
@@ -118,7 +120,7 @@ class MultiRod:
             self.__gj = G_rod * np.pi * self.__r0 ** 4 / 2
 
         self.__ks = 3 ** (1/2) / 2 * material.youngs_shell * \
-            self.__h * self.ref_len
+            self.__h * self.__ref_len
         self.__kb = 2 / (3 ** (1/2)) * material.youngs_shell * \
             (self.__h ** 3) / 12
 
@@ -128,10 +130,11 @@ class MultiRod:
 
             # trial debug
             self.__ks = 2 * material.youngs_shell * self.__h / \
-                (1 - self.__nu_shell ** 2) * self.ref_len
+                (1 - self.__nu_shell ** 2) * self.__ref_len
 
         # other properties
-        self.__edge_combos = self.construct_possible_edge_combos(
+        # FIXME: Calculate only if self contact force is used
+        self.__edge_combos = self.__construct_possible_edge_combos(
             np.concat(geo.rod_edges, geo.rod_shell_joint_edges) if geo.rod_shell_joint_edges.size else geo.rod_edges)
         self.__u = np.zeros(self.__q0.size)
         self.__a1 = np.zeros((self.__n_edges_dof, 3))
@@ -143,7 +146,7 @@ class MultiRod:
         if sim_params.use_mid_edge:
             self.__face_edges = geo.face_edges
             self.__sign_faces = geo.sign_faces
-            # TODO: init stuff
+            self.__init_ts, self.__init_cs, self.__init_fs, self.__init_xis = self.__init_curvature_midedge()
         else:
             self.__face_edges = np.empty(0)
             self.__sign_faces = np.empty(0)
@@ -152,25 +155,22 @@ class MultiRod:
             self.__init_fs = np.empty(0)
             self.__init_xis = np.empty(0)
 
-    @functools.cached_property
-    def ref_len(self):
+    def __get_ref_len(self):
         temp = []
         for i in range(self.__n_edges):
             n1, n2 = self.__edges[i]
             temp.append(np.linalg.norm(self.__nodes[n1] - self.__nodes[n2]))
         return np.stack(temp, axis=-1)
 
-    @functools.cached_property
-    def voronoi_ref_len(self):
+    def __get_voronoi_ref_len(self):
         ret = np.zeros(self.__n_nodes)
         for i in range(self.__n_edges_dof):
             n1, n2 = self.__edges[i]
-            ret[n1] += 0.5 * self.ref_len[i]
-            ret[n2] += 0.5 * self.ref_len[i]
+            ret[n1] += 0.5 * self.__ref_len[i]
+            ret[n2] += 0.5 * self.__ref_len[i]
         return ret
 
-    @functools.cached_property
-    def voronoi_area(self):
+    def __get_voronoi_area(self):
         if self.__face_nodes_shell.size:
             ret = np.zeros(self.__n_nodes)
             for n1, n2, n3 in range(self.__face_nodes_shell):
@@ -182,8 +182,7 @@ class MultiRod:
             return ret
         return np.empty(0)
 
-    @functools.cached_property
-    def face_area(self):
+    def __get_face_area(self):
         temp = []
         for i in range(self.__n_faces):
             n1, n2, n3 = self.__face_nodes_shell[i]
@@ -191,14 +190,7 @@ class MultiRod:
                 self.__nodes[n2] - self.__nodes[n1], self.__nodes[n3] - self.__nodes[n2])))
         return np.stack(temp, axis=-1) if len(temp) else np.empty(0)
 
-    @property
-    def mass_matrix(self):
-        """
-        mass matrix associated with initial geom
-        """
-        return self.__mass_matrix
-
-    def get_mass_matrix(self, geom: GeomParams):
+    def __get_mass_matrix(self, geom: GeomParams):
         """
         generate a mass matrix for specified parameters
         """
@@ -211,43 +203,131 @@ class MultiRod:
                 self.__nodes[n2] - self.__nodes[n1], self.__nodes[n3] - self.__nodes[n2]))
             mface = self.__rho * face_A * self.__h
 
-            m[self.map_node_to_dof(n1)] += mface / 3 * np.ones(3)
-            m[self.map_node_to_dof(n2)] += mface / 3 * np.ones(3)
-            m[self.map_node_to_dof(n3)] += mface / 3 * np.ones(3)
+            m[self.__map_node_to_dof(n1)] += mface / 3 * np.ones(3)
+            m[self.__map_node_to_dof(n2)] += mface / 3 * np.ones(3)
+            m[self.__map_node_to_dof(n3)] += mface / 3 * np.ones(3)
 
         # rod nodes
         for i in range(self.__n_nodes):
             if geom.axs is not None:
-                dm = self.voronoi_ref_len[i] * geom.axs * self.__rho
+                dm = self.__voronoi_ref_len[i] * geom.axs * self.__rho
             else:
-                dm = self.voronoi_ref_len[i] * \
+                dm = self.__voronoi_ref_len[i] * \
                     np.pi * self.__r0 ** 2 * self.__rho
-            m[self.map_node_to_dof(i)] += dm * np.ones(3)
+            m[self.__map_node_to_dof(i)] += dm * np.ones(3)
 
         # Rod edges
         for i in range(self.__n_edges_dof):
             if geom.axs is not None:
-                dm = self.ref_len[i] * geom.axs * self.__rho
+                dm = self.__ref_len[i] * geom.axs * self.__rho
             else:
-                dm = self.refLen[i] * np.pi * self.__r0 ** 2 * self.__rho
-            m[self.map_edge_to_dof(i)] = dm / 2 * self.__r0 ** 2
+                dm = self.__ref_len[i] * np.pi * self.__r0 ** 2 * self.__rho
+            m[self.__map_edge_to_dof(i)] = dm / 2 * self.__r0 ** 2
         return np.diag(m)
 
-    # TODO:
-    def init_curvature_midedge(self):
-        pass
+    def __init_curvature_midedge(self):
+        ts = np.zeros((3, 3, self.__n_faces))
+        fs = np.zeros((3, self.__n_faces))
+        cs = np.zeros((3, self.__n_faces))
+        xis = np.zeros((3, self.__n_faces))
+
+        edge_common_to = np.zeros(self.__n_edges)
+        n_avg = np.zeros((3, self.__n_edges))
+        tau_0 = np.zeros((3, self.__n_edges))
+        e = np.zeros((3, self.__n_edges))
+
+        for i in range(self.__n_faces):
+            n1, n2, n3 = self.__face_nodes_shell[i]
+            n1p = self.__q[3 * n1 - 3:3 * n1]
+            n2p = self.__q[3 * n2 - 3:3 * n2]
+            n3p = self.__q[3 * n3 - 3:3 * n3]
+
+            # face normal
+            face_normal = np.linalg.cross(n2p - n1p, n3p - n1p)
+            face_unit_normal = face_normal * 1 / np.linalg.norm(face_normal)
+
+            # face edge map
+            for edge in self.__face_edges[i]:
+                edge_common_to[edge] = edge_common_to[edge] + 1
+
+                n_avg[:, edge] += face_unit_normal
+                n_avg[:, edge] /= np.linalg.norm(n_avg[:, edge])
+
+                assert (edge_common_to[edge] < 3)
+
+        for i in range(self.__n_edges):
+            e[:, i] = self.__q[3 * self.__edges[i, 1] - 3: 3 * self.__edges[i, 1]
+                               ] - self.__q[3 * self.__edges[i, 0] - 3: 3 * self.__edges[i, 0]]
+            tau_0 = np.linalg.cross(e[:, i], n_avg[:, i])
+            tau_0 /= np.linalg.norm(tau_0)
+
+        for i in range(self.__n_faces):
+            face_i_nodes = self.__face_nodes_shell[i]
+            face_i_edges = self.__face_edges[i]
+
+            p_is = np.zeros((3, 3))
+            xi_is = np.zeros((3, 3))
+            tau_0_is = np.zeros((3, 3))
+
+            for j in range(3):
+                p_is[: j] = self.__q[3 * face_i_nodes[j] - 3: 3 * face_i_nodes[j]]
+                xi_is[j] = self.__q[3 * self.__n_nodes + face_i_edges[j]]
+                tau_0_is[:, j] = tau_0[:, face_i_edges[j]]
+
+            s_is = self.__sign_faces[i]
+
+            xis[:, i] = xi_is
+
+            t, f, c = self.__init_t_f_c_midedge(p_is, tau_0_is, s_is)
+            ts[:, :, i] = t
+            fs[:, i] = f.T
+            cs[:, i] = c.T
+
+        return ts, fs, cs, xis
 
     @staticmethod
-    def init_t_f_c_midedge(p_s, tau0_s, s_s):
-        pass
+    def __init_t_f_c_midedge(p_s: np.ndarray, tau0_s: np.ndarray, s_s: np.ndarray):
+        pi, pj, pk = p_s
+
+        tau0_i, tau0_j, tau0_k = s_s * tau0_s
+
+        # edges
+        vi = pk - pj
+        vj = pi - pk
+        vk = pj - pi
+
+        li = np.linalg.norm(vi)
+        lj = np.linalg.norm(vj)
+        lk = np.linalg.norm(vk)
+
+        # triangle face normal
+        normal = np.linalg.cross(vk, vi)
+        A = np.linalg.norm(normal) / 2
+        unit_norm = normal / np.linalg.norm(normal)
+
+        # t_i
+        t_i = np.linalg.norm(vi, unit_norm)
+        t_j = np.linalg.norm(vj, unit_norm)
+        t_k = np.linalg.norm(vk, unit_norm)
+
+        # c_i
+        c_i = 1 / (A * li * np.dot((t_i / np.linalg.norm(t_i)), tau0_i))
+        c_j = 1 / (A * lj * np.dot((t_j / np.linalg.norm(t_j)), tau0_j))
+        c_k = 1 / (A * lk * np.dot((t_k / np.linalg.norm(t_k)), tau0_k))
+
+        # f_i
+        f_i = np.dot(unit_norm, tau0_i)
+        f_j = np.dot(unit_norm, tau0_j)
+        f_k = np.dot(unit_norm, tau0_k)
+
+        return np.concat((t_i, t_j, t_k)), np.concat((f_i, f_j, f_k)), np.concat((c_i, c_j, c_k))
 
     @staticmethod
-    def construct_possible_edge_combos(edges: np.ndarray):
+    def __construct_possible_edge_combos(edges: np.ndarray):
         idx = [np.array([0, 0])]  # jugaad
 
         for i in range(n_edges := np.size(edges, 0)):
             for j in range(n_edges):
-                temp_combo = np.array([i, j])
                 if not (edges[i, 0] == edges[j, 0] or edges[i, 0] == edges[j, 1] or edges[i, 1] == edges[j, 0] or edges[i, 1] == edges[j, 1]) and \
                         not any([(n1 == i and n2 == j) or (n1 == j and n2 == i) for (n1, n2) in idx]):
                     idx.append(np.array([i, j]))
@@ -256,35 +336,22 @@ class MultiRod:
         for i in range(np.size(idx_count)):
             edge_combos[i] = np.concat((edges[idx[i][0]], edges[idx[i][1]]))
 
-    """
-    Implied functions
-
-    TODO: Figure out what matlab function should be incorporated
-    """
-
-    def get_gravity(self, env):
-        g_adjusted = env.g
-        if "bouyancy" in env.ext_force_list:
-            g_adjusted *= (1 - env.rho / self.__rho)
-
-        fg = np.zeros(self.mass_matrix.shape[0])
-        for i in range(self.__n_nodes):
-            ind = self.map_node_to_dof(i)
-            fg[ind] = np.diag(self.mass_matrix[np.ix_(ind, ind)]) * g_adjusted
-        return fg
-
     @staticmethod
-    def map_node_to_dof(node_num: int) -> np.ndarray:
+    def __map_node_to_dof(node_num: int) -> np.ndarray:
         return np.array([node_num * 3, node_num * 3 + 1, node_num * 3 + 2])
-    
-    def map_edge_to_dof(self, edge_num: int) -> np.ndarray:
-        """
-        skip nodes
-        """
+
+    def __map_edge_to_dof(self, edge_num: int) -> np.ndarray:
         return self.__n_nodes * 3 + edge_num
 
-    def update_tangent(self):
+    """
+    Public Interface
+    """
+
+    def compute_time_parallel(self, a1_old, q0, q) -> typing.Tuple[np.ndarray, np.ndarray]:
         pass
 
-    def derfun(self):
+    def compute_space_parallel(self):
+        pass
+
+    def compute_tangent(self, q) -> np.ndarray:
         pass

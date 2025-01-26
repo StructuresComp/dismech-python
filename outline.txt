@@ -23,11 +23,11 @@ Solver
 
 
 # SoftRobot Functions
-computeSpaceParallel
-computeTimeParallel
+computeSpaceParallel ✓
+computeTimeParallel ✓
 computeReferenceTwist
-computeTangent
-computeKappa (setKappa)
+computeTangent ✓
+computeKappa (setKappa) ✓
 updatePreCompShell (updatePreComp_without_sign)
 
     

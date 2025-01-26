@@ -78,6 +78,9 @@ class SoftRobot:
         # Twist angles from geometry
         self.__twist_angles = geo.twist_angles
 
+        # Springs
+        self.__bend_twist_springs = geo.bend_twist_springs
+
         # DOF vector
         self.__n_dof = 3 * self.__n_nodes + \
             self.__n_edges_rod_only + n_edges_rod_shell_joint_total
@@ -234,35 +237,7 @@ class SoftRobot:
         cs = np.zeros((3, self.__n_faces))
         xis = np.zeros((3, self.__n_faces))
 
-        edge_common_to = np.zeros(self.__n_edges)
-        n_avg = np.zeros((3, self.__n_edges))
-        tau_0 = np.zeros((3, self.__n_edges))
-        e = np.zeros((3, self.__n_edges))
-
-        for i in range(self.__n_faces):
-            n1, n2, n3 = self.__face_nodes_shell[i]
-            n1p = self.__q[3 * n1 - 3:3 * n1]
-            n2p = self.__q[3 * n2 - 3:3 * n2]
-            n3p = self.__q[3 * n3 - 3:3 * n3]
-
-            # face normal
-            face_normal = np.linalg.cross(n2p - n1p, n3p - n1p)
-            face_unit_normal = face_normal * 1 / np.linalg.norm(face_normal)
-
-            # face edge map
-            for edge in self.__face_edges[i]:
-                edge_common_to[edge] = edge_common_to[edge] + 1
-
-                n_avg[:, edge] += face_unit_normal
-                n_avg[:, edge] /= np.linalg.norm(n_avg[:, edge])
-
-                assert (edge_common_to[edge] < 3)
-
-        for i in range(self.__n_edges):
-            e[:, i] = self.__q[3 * self.__edges[i, 1] - 3: 3 * self.__edges[i, 1]
-                               ] - self.__q[3 * self.__edges[i, 0] - 3: 3 * self.__edges[i, 0]]
-            tau_0 = np.linalg.cross(e[:, i], n_avg[:, i])
-            tau_0 /= np.linalg.norm(tau_0)
+        tau_0 = self.update_pre_comp_shell(self.__q)
 
         for i in range(self.__n_faces):
             face_i_nodes = self.__face_nodes_shell[i]
@@ -346,15 +321,75 @@ class SoftRobot:
     def __map_edge_to_dof(self, edge_num: int) -> np.ndarray:
         return self.__n_nodes * 3 + edge_num
 
+    @staticmethod
+    def __parallel_transport(u, t1, t2) -> np.ndarray:
+        b = np.cross(t1, t2)
+        if (b_norm := np.linalg.norm(b)) == 0:
+            return u
+
+        # for numerical stability
+        b /= b_norm
+        b -= np.dot(b, t1) * t1
+        b /= np.linalg.norm(b)
+        b -= np.dot(b, t2) * t2
+        b /= np.linalg.norm(b)
+
+        n1 = np.cross(t1, b)
+        n2 = np.cross(t2, b)
+        return np.dot(u, t1) * t2 + np.dot(u, n1) * n2 + np.dot(u, b) * b
+
     """
     Public Interface
     """
 
     def compute_time_parallel(self, a1_old, q0, q) -> typing.Tuple[np.ndarray, np.ndarray]:
-        pass
+        # Should we change the interface?
+        tangent0 = self.compute_tangent(q0)
+        tangent = self.compute_tangent(q)
+
+        a1 = np.zeros((self.__n_edges_dof, 3))
+        a2 = np.zeros((self.__n_edges_dof, 3))
+
+        for i in range(self.__n_edges_dof):
+            t0 = tangent0[i]
+            t = tangent[i]
+
+            a1_local = self.__parallel_transport(a1_old[i], t0, t)
+
+            a1_local -= np.dot(a1_local, t) * t
+            a1_local /= np.linalg.norm(a1_local)
+
+            a1[i] = a1_local
+            a2[i] = np.cross(t, a1_local)
+
+        return a1, a2
 
     def compute_space_parallel(self):
-        pass
+        """
+        Set to initial reference frame
+        """
+        self.__tangent = self.compute_tangent(self.__q0)
+
+        # Set initial entry
+        t0 = self.__tangent[1]
+        t1 = np.array([0, 1, 0])
+        a1Tmp = np.cross(t0, t1)
+
+        if abs(a1Tmp) < 1e-6:  # ==0
+            t1 = np.array([0, 0, -1])
+            a1Tmp = np.cross(t0, t1)
+
+        self.__a1[0] = a1Tmp / np.linalg.norm(a1Tmp)
+        self.__a2[0] = np.cross(self.__tangent[0], self.__a1[0])
+
+        # Space parallel transport to construct the reference frame
+        for i in range(1, self.__n_edges_dof):
+            t0 = self.__tangent[i-1]
+            t1 = self.__tangent[i]
+            a1_0 = self.__a1[i-1]
+            a1_1 = self.__parallel_transport(a1_0, t0, t1)
+            self.__a1[i] = a1_1 / np.linalg.norm(a1_1)
+            self.__a2[i] = np.cross(t1, self.__a1[i])
 
     def compute_tangent(self, q: np.ndarray) -> np.ndarray:
         tangent = np.zeros((self.__n_edges_dof, 3))
@@ -371,6 +406,54 @@ class SoftRobot:
             tangent[i] = tangent_vec
 
         return tangent
+
+    def compute_kappa(self, n0, n1, n2, m1e, m2e, m1f, m2f):
+        t0 = n1 - n0 / np.linalg.norm(n1 - n0)
+        t1 = n2 - n1 / np.linalg.norm(n2 - n1)
+        kb = 2.0 * np.cross(t0, t1) / (1.0 + np.dot(t0, t1))
+
+        kappa1 = 0.5 * np.dot(kb, m2e + m2f)
+        kappa2 = -0.5 * np.dot(kb, m1e + m1f)
+
+        return np.stack((kappa1, kappa2), axis=0)
+
+    def compute_reference_twist(self, a1, tangent, ref_twist):
+        n_twist = np.size(ref_twist)
+
+        # uses bendTwistSPring.m class???
+
+    def update_pre_comp_shell(self, q):
+        edge_common_to = np.zeros(self.__n_edges)
+        n_avg = np.zeros((3, self.__n_edges))
+        tau_0 = np.zeros((3, self.__n_edges))
+        e = np.zeros((3, self.__n_edges))
+
+        for i in range(self.__n_faces):
+            n1, n2, n3 = self.__face_nodes_shell[i]
+            n1p = self.__q[3 * n1 - 3:3 * n1]
+            n2p = self.__q[3 * n2 - 3:3 * n2]
+            n3p = self.__q[3 * n3 - 3:3 * n3]
+
+            # face normal
+            face_normal = np.linalg.cross(n2p - n1p, n3p - n1p)
+            face_unit_normal = face_normal * 1 / np.linalg.norm(face_normal)
+
+            # face edge map
+            for edge in self.__face_edges[i]:
+                edge_common_to[edge] = edge_common_to[edge] + 1
+
+                n_avg[:, edge] += face_unit_normal
+                n_avg[:, edge] /= np.linalg.norm(n_avg[:, edge])
+
+                assert (edge_common_to[edge] < 3)
+
+        for i in range(self.__n_edges):
+            e[:, i] = q[3 * self.__edges[i, 1] - 3: 3 * self.__edges[i, 1]
+                        ] - self.__q[3 * self.__edges[i, 0] - 3: 3 * self.__edges[i, 0]]
+            tau_0 = np.linalg.cross(e[:, i], n_avg[:, i])
+            tau_0 /= np.linalg.norm(tau_0)
+
+        return tau_0
 
     @property
     def q(self):

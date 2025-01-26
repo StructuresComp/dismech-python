@@ -40,8 +40,9 @@ def rod_cantilever_material():
 def rod_cantilever_n26():
     return dismech.Geometry.from_txt(rel_path('resources/rod_cantilever/horizontal_rod_n26.txt'))
 
+
 @pytest.fixture
-def multirod_cantilever_n26(rod_cantilever_geom, rod_cantilever_material, rod_cantilever_n26, static_2d_sim, free_fall_env):
+def softrobot_cantilever_n26(rod_cantilever_geom, rod_cantilever_material, rod_cantilever_n26, static_2d_sim, free_fall_env):
     return dismech.SoftRobot(rod_cantilever_geom, rod_cantilever_material, rod_cantilever_n26, static_2d_sim, free_fall_env)
 
 
@@ -49,8 +50,9 @@ def multirod_cantilever_n26(rod_cantilever_geom, rod_cantilever_material, rod_ca
 def rod_cantilever_n51():
     return dismech.Geometry.from_txt(rel_path('resources/rod_cantilever/horizontal_rod_n51.txt'))
 
+
 @pytest.fixture
-def multirod_cantilever_n51(rod_cantilever_geom, rod_cantilever_material, rod_cantilever_n51, static_2d_sim, free_fall_env):
+def softrobot_cantilever_n51(rod_cantilever_geom, rod_cantilever_material, rod_cantilever_n51, static_2d_sim, free_fall_env):
     return dismech.SoftRobot(rod_cantilever_geom, rod_cantilever_material, rod_cantilever_n51, static_2d_sim, free_fall_env)
 
 
@@ -58,10 +60,34 @@ def multirod_cantilever_n51(rod_cantilever_geom, rod_cantilever_material, rod_ca
 def rod_cantilever_n101():
     return dismech.Geometry.from_txt(rel_path('resources/rod_cantilever/horizontal_rod_n101.txt'))
 
+# parachute
+
+
+@pytest.fixture
+def hexparachute_n6_geom():
+    return dismech.GeomParams(rod_r0=1e-3,
+                              shell_h=1e-3)
+
+
+@pytest.fixture
+def hexparachute_n6_material():
+    return dismech.Material(density=1500,
+                            youngs_rod=10e6,
+                            youngs_shell=10e8,
+                            poisson_rod=0.5,
+                            poisson_shell=0.3)
+
 
 @pytest.fixture
 def hexparachute_n6():
     return dismech.Geometry.from_txt(rel_path('resources/parachute/hexparachute_n6_python.txt'))
+
+
+@pytest.fixture
+def softrobot_hexparachute_n6(hexparachute_n6_geom, hexparachute_n6_material, hexparachute_n6, dynamic_3d_sim, drag_fall_env):
+    return dismech.SoftRobot(hexparachute_n6_geom, hexparachute_n6_material, hexparachute_n6, dynamic_3d_sim, drag_fall_env)
+
+# pneunet
 
 
 @pytest.fixture
@@ -113,4 +139,12 @@ def dynamic_3d_sim():
 def free_fall_env():
     env = dismech.Environment()
     env.add_force('gravity', g=np.array([0.0, 0.0, -9.81]))
+    return env
+
+
+@pytest.fixture
+def drag_fall_env():
+    env = dismech.Environment()
+    env.add_force('gravity', g=np.array([0.0, 0.0, -9.81]))
+    env.add_force('aerodynamics', rho=1, cd=10)
     return env

@@ -44,6 +44,9 @@ class SimParams:
     dtol: float
 
 
+_TANGENT_THRESHOLD = 1e-10
+
+
 class SoftRobot:
 
     def __init__(self, geom: GeomParams, material: Material,
@@ -135,7 +138,7 @@ class SoftRobot:
         # other properties
         # FIXME: Calculate only if self contact force is used
         self.__edge_combos = self.__construct_possible_edge_combos(
-            np.concat(geo.rod_edges, geo.rod_shell_joint_edges) if geo.rod_shell_joint_edges.size else geo.rod_edges)
+            np.concat((geo.rod_edges, geo.rod_shell_joint_edges)) if geo.rod_shell_joint_edges.size else geo.rod_edges)
         self.__u = np.zeros(self.__q0.size)
         self.__a1 = np.zeros((self.__n_edges_dof, 3))
         self.__a2 = np.zeros((self.__n_edges_dof, 3))
@@ -173,7 +176,7 @@ class SoftRobot:
     def __get_voronoi_area(self):
         if self.__face_nodes_shell.size:
             ret = np.zeros(self.__n_nodes)
-            for n1, n2, n3 in range(self.__face_nodes_shell):
+            for n1, n2, n3 in self.__face_nodes_shell:
                 face_A = 0.5 * np.linalg.norm(np.linalg.cross(
                     self.__nodes[n2] - self.__nodes[n1], self.__nodes[n3] - self.__nodes[n2]))
                 ret[n1] += face_A / 3
@@ -353,5 +356,22 @@ class SoftRobot:
     def compute_space_parallel(self):
         pass
 
-    def compute_tangent(self, q) -> np.ndarray:
-        pass
+    def compute_tangent(self, q: np.ndarray) -> np.ndarray:
+        tangent = np.zeros((self.__n_edges_dof, 3))
+
+        for i in range(self.__n_edges_dof):
+            n0, n1 = self.__edges[i]
+            n0_pos = q[self.__map_node_to_dof(n0)]
+            n1_pos = q[self.__map_node_to_dof(n1)]
+            de = (n1_pos - n0_pos).T
+            tangent_vec = de / np.linalg.norm(de)
+            # Remove small non-zero terms
+            tangent_vec[np.abs(tangent_vec) < _TANGENT_THRESHOLD] = 0
+
+            tangent[i] = tangent_vec
+
+        return tangent
+
+    @property
+    def q(self):
+        return self.__q

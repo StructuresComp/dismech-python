@@ -220,7 +220,7 @@ class Geometry:
         # Twist angles
         # TODO: Make this mutable
         self.__twist_angles = np.zeros(
-            n_rod_edges + np.size(self.shell_edges, 0))
+            n_rod_edges + np.size(self.__rod_shell_joint_edges_total, 0))
 
     @staticmethod
     def __safe_concat(arrs: typing.Tuple[np.ndarray]) -> np.ndarray:

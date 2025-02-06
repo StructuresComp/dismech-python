@@ -32,8 +32,6 @@ def validate_create_geometry(geo: dismech.Geometry, valid_data: typing.Dict[str,
     """
     assert (custom_array_equal(valid_data['nodes'], geo.nodes))
     assert (custom_array_equal(valid_data['edges'] - 1, geo.edges))
-    assert (custom_array_equal(valid_data['rod_nodes'], geo.rod_nodes))
-    assert (custom_array_equal(valid_data['shell_nodes'], geo.shell_nodes))
     assert (custom_array_equal(valid_data['rod_edges'] - 1, geo.rod_edges))
     assert (custom_array_equal(valid_data['shell_edges'] - 1, geo.shell_edges))
     assert (custom_array_equal(

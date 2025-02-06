@@ -15,29 +15,23 @@ class Geometry:
     Generate, save, and load custom node geometries
     """
 
-    def __init__(self, rod_nodes: np.ndarray, shell_nodes: np.ndarray,
+    def __init__(self, nodes: np.ndarray,
                  rod_edges: np.ndarray, rod_shell_joint_edges: np.ndarray,
                  face_nodes: np.ndarray):
         """
         acts as createGeometry.m
         """
         # save important params
-        self.__rod_nodes = rod_nodes
-        self.__shell_nodes = shell_nodes
+        self.__nodes = nodes
         self.__rod_edges = rod_edges
         self.__rod_shell_joint_edges = rod_shell_joint_edges
         self.__face_nodes = face_nodes
 
         # general counting
-        n_rod_nodes = np.size(rod_nodes, 0)
-        n_shell_nodes = np.size(shell_nodes, 0)
-        n_nodes = n_rod_nodes + n_shell_nodes
+        n_nodes = np.size(nodes, 0)
         n_rod_edges = np.size(rod_edges, 0)
         n_rod_shell_joints = np.size(rod_shell_joint_edges, 0)
         n_faces = np.size(face_nodes, 0)
-
-        # using custom concat to deal with empty array
-        self.__nodes = self.__safe_concat((rod_nodes, shell_nodes))
 
         # Initialize shell-related arrays
         nEdges = 3 * n_faces
@@ -247,10 +241,10 @@ class Geometry:
             raise ValueError('{} is not a valid path'.format(fname))
 
         # Constants
-        valid_headers = {'*rodnodes': 0, '*shellnodes': 1,
-                         '*rodedges': 2, '*rodshelljointedges': 3, '*facenodes': 4}
-        h_len = [3, 3, 2, 2, 3]  # expected entry length
-        h_dtype = [GEOMETRY_FLOAT, GEOMETRY_FLOAT,
+        valid_headers = {'*nodes': 0,
+                         '*rodedges': 1, '*rodshelljointedges': 2, '*facenodes': 3}
+        h_len = [3, 2, 2, 3]  # expected entry length
+        h_dtype = [GEOMETRY_FLOAT,
                    GEOMETRY_INT, GEOMETRY_INT, GEOMETRY_INT]
 
         # Flags
@@ -316,14 +310,6 @@ class Geometry:
     @property
     def edges(self):
         return self.__edges
-
-    @property
-    def rod_nodes(self):
-        return self.__rod_nodes
-
-    @property
-    def shell_nodes(self):
-        return self.__shell_nodes
 
     @property
     def rod_edges(self):

@@ -59,9 +59,7 @@ class SoftRobot:
         self.__nu_shell = material.poisson_shell
 
         # Node and edge counts
-        self.__n_rod_nodes = np.size(geo.rod_nodes, 0)
-        self.__n_shell_nodes = np.size(geo.shell_nodes, 0)
-        self.__n_nodes = self.__n_rod_nodes + self.__n_shell_nodes
+        self.__n_nodes = np.size(geo.nodes, 0)
         self.__n_edges_rod_only = np.size(geo.rod_edges, 0)
         self.__n_edges_shell_only = np.size(geo.shell_edges, 0)
         n_edges_rod_shell_joint_total = np.size(

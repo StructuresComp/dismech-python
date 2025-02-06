@@ -28,6 +28,6 @@ computeTimeParallel ✓
 computeReferenceTwist
 computeTangent ✓
 computeKappa (setKappa) ✓
-updatePreCompShell (updatePreComp_without_sign)
+updatePreCompShell (updatePreComp_without_sign) ✓
 
     

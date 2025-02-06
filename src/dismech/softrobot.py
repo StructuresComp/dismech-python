@@ -119,9 +119,9 @@ class SoftRobot:
             self.__EI2 = self.__EI1
 
         if geom.jxs is not None:
-            self.__gj = G_rod * geom.jxs
+            self.__GJ = G_rod * geom.jxs
         else:
-            self.__gj = G_rod * np.pi * self.__r0 ** 4 / 2
+            self.__GJ = G_rod * np.pi * self.__r0 ** 4 / 2
 
         self.__ks = 3 ** (1/2) / 2 * material.youngs_shell * \
             self.__h * self.__ref_len

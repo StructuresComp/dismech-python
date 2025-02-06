@@ -2,8 +2,12 @@ import pathlib
 import pytest
 import numpy as np
 
-import dismech
+import sys
+import os
 
+# Add the 'src' directory to the system path
+sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '../src')))
+import dismech
 
 def rel_path(fname: str) -> pathlib.Path:
     """

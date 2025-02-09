@@ -16,21 +16,20 @@ class Geometry:
     """
 
     def __init__(self, nodes: np.ndarray,
-                 rod_edges: np.ndarray, rod_shell_joint_edges: np.ndarray,
+                 edges: np.ndarray,
                  face_nodes: np.ndarray):
         """
         acts as createGeometry.m
         """
         # save important params
         self.__nodes = nodes
-        self.__rod_edges = rod_edges
-        self.__rod_shell_joint_edges = rod_shell_joint_edges
+        self.__rod_shell_joint_edges, self.__rod_edges = self.__separate_joint_edges(face_nodes, edges)
         self.__face_nodes = face_nodes
 
         # general counting
         n_nodes = np.size(nodes, 0)
-        n_rod_edges = np.size(rod_edges, 0)
-        n_rod_shell_joints = np.size(rod_shell_joint_edges, 0)
+        n_rod_edges = np.size(self.__rod_edges, 0)
+        n_rod_shell_joints = np.size(self.__rod_shell_joint_edges, 0)
         n_faces = np.size(face_nodes, 0)
 
         # Initialize shell-related arrays
@@ -106,7 +105,7 @@ class Geometry:
         # Ghost edges for rod shell joint bent-twist springs
         ghost_rod_shell_joint_edges = [np.array([0, 0])]  # jugaad
         for i in range(n_rod_shell_joints):
-            s_node = rod_shell_joint_edges[i][1]
+            s_node = self.__rod_shell_joint_edges[i][1]
             s_faces = []
 
             # find faces with s_node
@@ -127,14 +126,14 @@ class Geometry:
 
         # remove jugaad
         self.__rod_shell_joint_edges_total = np.concat(
-            (rod_shell_joint_edges, ghost_rod_shell_joint_edges[1:]), 0)
+            (self.__rod_shell_joint_edges, ghost_rod_shell_joint_edges[1:]), 0)
 
         # bend-twist springs
-        if rod_edges.size or rod_shell_joint_edges.size:
+        if self.__rod_edges.size or self.__rod_shell_joint_edges.size:
             bend_twist_springs = []  # N e N e N
             bend_twist_signs = []
             rod_edges_modified = self.__safe_concat(
-                (rod_edges, self.__rod_shell_joint_edges_total))
+                (self.__rod_edges, self.__rod_shell_joint_edges_total))
 
             for i in range(n_nodes):
                 # find edges that point in/out of the center node
@@ -180,7 +179,7 @@ class Geometry:
 
         # sequence edges
         self.__edges = self.__safe_concat(
-            (rod_edges, self.__rod_shell_joint_edges_total))
+            (self.__rod_edges, self.__rod_shell_joint_edges_total))
 
         # only add unique shell_edges
         if self.__edges.size:
@@ -195,7 +194,7 @@ class Geometry:
 
         # stretch springs
         self.__rod_stretch_springs = self.__safe_concat(
-            (rod_edges, rod_shell_joint_edges))
+            (self.__rod_edges, self.__rod_shell_joint_edges))
         self.__shell_stretch_springs = self.__shell_edges
 
         # face edges
@@ -242,10 +241,10 @@ class Geometry:
 
         # Constants
         valid_headers = {'*nodes': 0,
-                         '*rodedges': 1, '*rodshelljointedges': 2, '*facenodes': 3}
-        h_len = [3, 2, 2, 3]  # expected entry length
+                         '*rodedges': 1, '*facenodes': 2}
+        h_len = [3, 2, 3]  # expected entry length
         h_dtype = [GEOMETRY_FLOAT,
-                   GEOMETRY_INT, GEOMETRY_INT, GEOMETRY_INT]
+                   GEOMETRY_INT, GEOMETRY_INT]
 
         # Flags
         h_flag = [False for _ in range(len(valid_headers))]  # list of flag
@@ -300,7 +299,29 @@ class Geometry:
                 params[cur_h] -= 1
 
         return Geometry(*params)
+    
+    @staticmethod
+    def __separate_joint_edges(triangles: np.ndarray, edges: np.ndarray):
+        if not edges.size:
+            return np.empty(0), np.empty(0)
+        
+        shell_nodes = np.unique(triangles)
+        is_joint_edge = np.isin(edges[:,0], shell_nodes) | np.isin(edges[:,1], shell_nodes)
 
+        joint_edges = edges[is_joint_edge]
+
+        rod_shell_joint_edges = np.zeros_like(joint_edges)
+
+        for i in range(np.size(joint_edges, 0)):
+            n1, n2 = joint_edges[i]
+
+            # put the common node in 2nd column
+            if np.isin(n1, shell_nodes):
+                rod_shell_joint_edges[i] = [n2, n1]
+            else:
+                rod_shell_joint_edges[i] = [n1, n2]
+
+        return rod_shell_joint_edges if rod_shell_joint_edges.size else np.empty(0), edges[~is_joint_edge]
     # Read-only properties (direct analogs to createGeometry.m output)
 
     @property

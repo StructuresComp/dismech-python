@@ -98,6 +98,13 @@ def softrobot_hexparachute_n6(hexparachute_n6_geom, hexparachute_n6_material, he
 def pneunet_shorter():
     return dismech.Geometry.from_txt(rel_path('resources/pneunet/input_straight_horizontal_shorter.txt'))
 
+
+# square plate
+@pytest.fixture
+def square_plate_30():
+    return dismech.Geometry.from_txt(rel_path('resources/square_plate/random_mesh_30.txt'))
+
+
 # sim params
 
 

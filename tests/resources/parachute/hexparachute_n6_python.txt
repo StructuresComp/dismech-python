@@ -465,7 +465,7 @@
 58, 59
 59, 60
 60, 61
-*rodshellJointEdges
+#*rodshellJointEdges
 11, 188
 21, 167
 31, 89

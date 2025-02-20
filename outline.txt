@@ -1,33 +1,24 @@
-SoftRobot
-BaseForce (Force/Jacobian)
-    GravityForce
-    SelfContactFrictionForce (Hard)
-    GroundContactFrictionForce
-    AerodynamicForce
-    ViscousForce
-    PointForce
-ElasticEnergy (Force/Jacobian/Energy/Strain)
-    StretchingEnergy
-    BendingEnergyRod
-    HingeBendingEnergyShell
-    MidedgeBendingEnergyShell
-    TwistingEnergy (Rod)
-TimeStepper
-    ImplicitTimeStepper
-        Backward Euler
-    ExplicitTimeStepper
-        Forward Euler
-Solver
-    Inverse (Built-in)
-    Pardiso (mkl Intel)
+class TimeStepper:
 
 
-# SoftRobot Functions
-computeSpaceParallel ✓
-computeTimeParallel ✓
-computeReferenceTwist
-computeTangent ✓
-computeKappa (setKappa) ✓
-updatePreCompShell (updatePreComp_without_sign) ✓
+TODO:
+
+    def __getFsJs():
+
+    def __getFbJb():
+
+    def __getFtJt():
+
+    def __getShellFbJb():
+
+    def __getShellMidedgeFbJb():
+
+    # External force functions (gravity, viscous, aero ...)
+
+    def __linearsolver():
+
+    def __linesearch():
+
+    def __newtondamper():
 
     

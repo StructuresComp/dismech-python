@@ -76,7 +76,7 @@ def test_rod_cantilever_n101_from_txt(rod_cantilever_n101):
 
 def test_hexparachute_n6(hexparachute_n6):
     valid_data = scipy.io.loadmat(
-        rel_path('resources/parachute/hexparachute_create_geometry.mat'))
+        rel_path('resources/parachute/hexparachute_n6_create_geometry.mat'))
     validate_create_geometry(hexparachute_n6, valid_data)
 
 # pneunet

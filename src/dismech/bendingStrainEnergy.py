@@ -1,4 +1,5 @@
 import numpy as np
+from typing import Tuple
 
 class BendingStrainEnergy:
     def __init__(self):
@@ -61,7 +62,7 @@ class BendingStrainEnergy:
 
         return self.gradKappa
 
-    def grad_and_hess_strain_curvature(self, node0=None, node1=None, node2=None, m1e=None, m2e=None, m1f=None, m2f=None) -> tuple[np.ndarray, np.ndarray]:
+    def grad_and_hess_strain_curvature(self, node0=None, node1=None, node2=None, m1e=None, m2e=None, m1f=None, m2f=None) -> Tuple[np.ndarray, np.ndarray]:
 
         ee = node1 - node0
         ef = node2 - node1
@@ -252,7 +253,7 @@ class BendingStrainEnergy:
         self.E = 0.5 * dKappa * np.array([[0, EI1],[EI2,0]]) * dKappa.T / l_eff # check this
         return self.E
 
-    def grad_and_hess_energy_bending_linear_elastic(self, node0: np.ndarray, node1: np.ndarray, node2: np.ndarray, l_eff: float, EI1: float, EI2: float, kappaBar: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+    def grad_and_hess_energy_bending_linear_elastic(self, node0: np.ndarray, node1: np.ndarray, node2: np.ndarray, l_eff: float, EI1: float, EI2: float, kappaBar: np.ndarray) -> Tuple[np.ndarray, np.ndarray]:
         self.kappa = self.get_strain_curvature(node0, node1, node2)
         self.gradKappa, self.hessKappa = self.grad_and_hess_strain_curvature(node0, node1, node2)
         dKappa = self.kappa - kappaBar

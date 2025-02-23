@@ -4,14 +4,13 @@ import typing
 
 import numpy as np
 
-from . import environment, geometry, bendingtwistingspring, stretch_spring
+from . import bend_twist_spring, environment, geometry, stretch_spring
 
 
 @dataclasses.dataclass
 class GeomParams:
     rod_r0: float
     shell_h: float
-
     axs: float = None
     jxs: float = None
     ixs1: float = None
@@ -49,281 +48,351 @@ _TANGENT_THRESHOLD = 1e-10
 
 
 class SoftRobot:
-
     def __init__(self, geom: GeomParams, material: Material,
                  geo: geometry.Geometry, sim_params: SimParams,
-                 environment: environment.Environment):
+                 env: environment.Environment):
         self.__sim_params = sim_params
+        self.__env = env
 
-        # Store important parameters as local vars for symmetry
+        # Store parameters as instance variables
         self.__r0 = geom.rod_r0
         self.__h = geom.shell_h
         self.__rho = material.density
         self.__nu_shell = material.poisson_shell
 
         # Node and edge counts
-        self.__n_nodes = np.size(geo.nodes, 0)
-        self.__n_edges_rod_only = np.size(geo.rod_edges, 0)
-        self.__n_edges_shell_only = np.size(geo.shell_edges, 0)
-        n_edges_rod_shell_joint_total = np.size(
-            geo.rod_shell_joint_edges_total, 0)
-        self.__n_edges = np.size(geo.edges, 0)
-        self.__n_edges_dof = self.__n_edges_rod_only + n_edges_rod_shell_joint_total
-        self.__n_faces = np.size(geo.face_nodes, 0)
+        self.__n_nodes = geo.nodes.shape[0]
+        self.__n_edges_rod_only = geo.rod_edges.shape[0]
+        self.__n_edges_shell_only = geo.shell_edges.shape[0]
+        n_edges_joint = geo.rod_shell_joint_edges_total.shape[0]
+        self.__n_edges = geo.edges.shape[0]
+        self.__n_edges_dof = self.__n_edges_rod_only + n_edges_joint
+        self.__n_faces = geo.face_nodes.shape[0] if geo.face_nodes.size else 0
 
-        # Store node and edges
+        # Geometry data
         self.__nodes = geo.nodes
         self.__edges = geo.edges
         self.__face_nodes_shell = geo.face_nodes
-
-        # Twist angles from geometry
         self.__twist_angles = geo.twist_angles
 
-        # DOF vector
-        self.__n_dof = 3 * self.__n_nodes + \
-            self.__n_edges_rod_only + n_edges_rod_shell_joint_total
+        # Initialize DOF vector
+        self.__n_dof = 3 * self.__n_nodes + self.__n_edges_dof
         self.__q0 = np.zeros(self.__n_dof)
-        self.__q_nodes = geo.nodes.flatten()
-        self.__q0[:3 * self.__n_nodes] = self.__q_nodes
-        self.__q0[3 * self.__n_nodes:3 *
-                  self.__n_nodes + self.__n_edges_dof] = self.__twist_angles
+        self.__q0[:3 * self.__n_nodes] = geo.nodes.flatten()
+        self.__q0[3 * self.__n_nodes:3 * self.__n_nodes +
+                  self.__n_edges_dof] = self.__twist_angles
 
         if sim_params.use_mid_edge:
             self.__n_dof += self.__n_edges_shell_only
-            self.__q0 = np.concat(
-                self.__q0, np.zeros(self.__n_edges_shell_only))
+            self.__q0 = np.concatenate(
+                (self.__q0, np.zeros(self.__n_edges_shell_only)))
 
-        self.__q = self.__q0
+        self.__q = self.__q0.copy()
 
-        # References and mass matrix
-        self.__ref_len = self.__get_ref_len()
-        self.__voronoi_ref_len = self.__get_voronoi_ref_len()
-        self.__voronoi_area = self.__get_voronoi_area()
-        self.__faec_area = self.__get_face_area()
+        # Precompute reference metrics
+        self.__ref_len = self._get_ref_len()
+        self.__voronoi_ref_len = self._get_voronoi_ref_len()
+        self.__voronoi_area = self._get_voronoi_area()
+        self.__face_area = self._get_face_area()
 
-        self.__mass_matrix = self.__get_mass_matrix(geom)
-
-        # Stiffnesses
+        # Mass matrix and stiffness properties
+        self.__mass_matrix = self._get_mass_matrix(geom)
         G_rod = material.youngs_rod / (2 * (1 + material.poisson_rod))
+        self.__EA, self.__EI1, self.__EI2, self.__GJ = self._compute_stiffness(
+            geom, material, G_rod)
+        self.__ks, self.__kb = self._compute_shell_stiffness(material)
 
+        # Initialize directors and springs
+        self._initialize_directors_and_springs(geo, sim_params)
+
+    @staticmethod
+    def map_node_to_dof(node_nums: typing.Union[int, np.ndarray]) -> np.ndarray:
+        base = 3 * np.asarray(node_nums)
+        return base[..., None] + np.array([0, 1, 2])
+
+    def map_edge_to_dof(self, edge_nums: typing.Union[int, np.ndarray]) -> np.ndarray:
+        return 3 * self.__n_nodes + np.asarray(edge_nums)
+
+    def _get_ref_len(self) -> np.ndarray:
+        edge_pairs = self.__edges
+        vectors = self.__nodes[edge_pairs[:, 1]] - \
+            self.__nodes[edge_pairs[:, 0]]
+        return np.linalg.norm(vectors, axis=1)
+
+    def _get_voronoi_ref_len(self) -> np.ndarray:
+        edges = self.__edges[:self.__n_edges_dof]
+        n_nodes = self.__n_nodes
+        weights = 0.5 * self.__ref_len[:self.__n_edges_dof]
+        contributions = np.zeros(n_nodes)
+        np.add.at(contributions, edges[:, 0], weights)
+        np.add.at(contributions, edges[:, 1], weights)
+        return contributions
+
+    def _get_voronoi_area(self) -> np.ndarray:
+        if not self.__face_nodes_shell.size:
+            return np.empty(0)
+        faces = self.__face_nodes_shell
+        v1 = self.__nodes[faces[:, 1]] - self.__nodes[faces[:, 0]]
+        v2 = self.__nodes[faces[:, 2]] - self.__nodes[faces[:, 1]]
+        cross = np.cross(v1, v2)
+        areas = 0.5 * np.linalg.norm(cross, axis=1)
+        node_areas = np.bincount(faces.ravel(), weights=np.repeat(
+            areas / 3, 3), minlength=self.__n_nodes)
+        return node_areas
+
+    def _get_face_area(self) -> np.ndarray:
+        if not self.__n_faces:
+            return np.empty(0)
+        faces = self.__face_nodes_shell
+        v1 = self.__nodes[faces[:, 1]] - self.__nodes[faces[:, 0]]
+        v2 = self.__nodes[faces[:, 2]] - self.__nodes[faces[:, 1]]
+        cross = np.cross(v1, v2)
+        return 0.5 * np.linalg.norm(cross, axis=1)
+
+    def _get_mass_matrix(self, geom: GeomParams) -> np.ndarray:
+        mass = np.zeros(self.__n_dof)
+
+        # Shell face contributions
+        if self.__n_faces:
+            faces = self.__face_nodes_shell
+            v1 = self.__nodes[faces[:, 1]] - self.__nodes[faces[:, 0]]
+            v2 = self.__nodes[faces[:, 2]] - self.__nodes[faces[:, 1]]
+            areas = 0.5 * np.linalg.norm(np.cross(v1, v2), axis=1)
+            m_shell = self.__rho * areas * self.__h
+            np.add.at(mass, (3 * faces).ravel(), np.repeat(m_shell / 3, 3))
+
+        # Rod node contributions
         if geom.axs is not None:
-            self.__EA = material.youngs_rod * geom.axs
+            dm_nodes = self.__voronoi_ref_len * geom.axs * self.__rho
         else:
-            self.__EA = material.youngs_rod * np.pi * self.__r0 ** 2
+            dm_nodes = self.__voronoi_ref_len * \
+                np.pi * (self.__r0 ** 2) * self.__rho
+        node_dofs = np.arange(3 * self.__n_nodes).reshape(-1, 3)
+        mass[node_dofs] += dm_nodes[:, None]
 
-        if geom.ixs1 is not None and geom.ixs2 is not None:
-            self.__EI1 = material.youngs_rod * geom.ixs1
-            self.__EI2 = material.youngs_rod * geom.ixs2
+        # Edge contributions
+        if self.__n_edges_dof:
+            if geom.axs is not None:
+                dm_edges = self.__ref_len[:self.__n_edges_dof] * \
+                    geom.axs * self.__rho
+            else:
+                dm_edges = self.__ref_len[:self.__n_edges_dof] * \
+                    np.pi * (self.__r0 ** 2) * self.__rho
+            edge_mass = dm_edges / 2 * (self.__r0 ** 2)
+            edge_dofs = 3 * self.__n_nodes + np.arange(self.__n_edges_dof)
+            mass[edge_dofs] = edge_mass
+
+        return np.diag(mass)
+
+    def _compute_stiffness(self, geom: GeomParams, material: Material, G_rod: float) -> typing.Tuple[float, ...]:
+        axs = geom.axs if geom.axs is not None else np.pi * self.__r0 ** 2
+        EA = material.youngs_rod * axs
+
+        if geom.ixs1 and geom.ixs2:
+            EI1 = material.youngs_rod * geom.ixs1
+            EI2 = material.youngs_rod * geom.ixs2
         else:
-            self.__EI1 = material.youngs_rod * np.pi * self.__r0 ** 4 / 4
-            self.__EI2 = self.__EI1
+            EI1 = EI2 = material.youngs_rod * np.pi * self.__r0 ** 4 / 4
 
-        if geom.jxs is not None:
-            self.__GJ = G_rod * geom.jxs
+        if geom.jxs:
+            GJ = G_rod * geom.jxs
         else:
-            self.__GJ = G_rod * np.pi * self.__r0 ** 4 / 2
+            GJ = G_rod * np.pi * self.__r0 ** 4 / 2
 
-        self.__ks = 3 ** (1/2) / 2 * material.youngs_shell * \
-            self.__h * self.__ref_len
-        self.__kb = 2 / (3 ** (1/2)) * material.youngs_shell * \
-            (self.__h ** 3) / 12
+        return EA, EI1, EI2, GJ
 
-        if sim_params.use_mid_edge:
-            self.__kb = material.youngs_shell * \
-                self.__h ** 3 / (24 * 1 - self.__nu_shell ** 2)
-
-            # trial debug
-            self.__ks = 2 * material.youngs_shell * self.__h / \
+    def _compute_shell_stiffness(self, material: Material) -> typing.Tuple[float, float]:
+        if self.__sim_params.use_mid_edge:
+            kb = material.youngs_shell * self.__h ** 3 / \
+                (24 * (1 - self.__nu_shell ** 2))
+            ks = 2 * material.youngs_shell * self.__h / \
                 (1 - self.__nu_shell ** 2) * self.__ref_len
+        else:
+            ks = (3 ** 0.5 / 2) * material.youngs_shell * \
+                self.__h * self.__ref_len
+            kb = (2 / (3 ** 0.5)) * material.youngs_shell * \
+                (self.__h ** 3) / 12
+        return ks, kb
 
-        # other properties
-        # FIXME: Calculate only if self contact force is used
-        self.__edge_combos = self.__construct_possible_edge_combos(
-            np.concat((geo.rod_edges, geo.rod_shell_joint_edges)) if geo.rod_shell_joint_edges.size else geo.rod_edges)
-        self.__u = np.zeros(self.__q0.size)
+    def _initialize_directors_and_springs(self, geo: geometry.Geometry, sim_params: SimParams):
+        # Initialize edge combinations for contact (simplified)
+        self.__edge_combos = self._construct_edge_combinations(
+            np.concatenate((geo.rod_edges, geo.rod_shell_joint_edges)
+                           ) if geo.rod_shell_joint_edges.size else geo.rod_edges
+        )
+
+        # Initialize directors and reference frames
         self.__a1 = np.zeros((self.__n_edges_dof, 3))
         self.__a2 = np.zeros((self.__n_edges_dof, 3))
         self.__m1 = np.zeros((self.__n_edges_dof, 3))
         self.__m2 = np.zeros((self.__n_edges_dof, 3))
 
-        # Store additional shell face info if using midedge
-        if sim_params.use_mid_edge:
-            self.__face_edges = geo.face_edges
-            self.__sign_faces = geo.sign_faces
-            self.__init_ts, self.__init_cs, self.__init_fs, self.__init_xis = self.__init_curvature_midedge()
-        else:
-            self.__face_edges = np.empty(0)
-            self.__sign_faces = np.empty(0)
-            self.__init_ts = np.empty(0)
-            self.__init_cs = np.empty(0)
-            self.__init_fs = np.empty(0)
-            self.__init_xis = np.empty(0)
-
-        # Springs
-        n_rod_springs = np.size(geo.rod_stretch_springs, 0)
-        self.__stretch_springs = [stretch_spring.StretchSpring(
-            self.ref_len[i], spring, self) for i, spring in enumerate(geo.rod_stretch_springs)]
-        self.__stretch_springs += [stretch_spring.StretchSpring(
-            self.ref_len[i + n_rod_springs], spring, self, self.__ks[i + n_rod_springs]) for i, spring in enumerate(geo.shell_stretch_springs)]
+        # Initialize springs
+        n_rod = geo.rod_stretch_springs.shape[0]
+        rod_springs = [stretch_spring.StretchSpring(self.ref_len[i], spring, self)
+                       for i, spring in enumerate(geo.rod_stretch_springs)]
+        shell_springs = [stretch_spring.StretchSpring(self.ref_len[i + n_rod], spring, self, self.__ks[i + n_rod])
+                         for i, spring in enumerate(geo.shell_stretch_springs)]
+        self.__stretch_springs = rod_springs + shell_springs
 
         self.__bend_twist_springs = [
-            bendingtwistingspring.BendingTwistingSpring(spring, sign, np.array([0, 0]), 0, self) for spring, sign in zip(geo.bend_twist_springs, geo.bend_twist_signs)]
+            bend_twist_spring.BendTwistSpring(
+                spring, sign, np.array([0, 0]), 0, self)
+            for spring, sign in zip(geo.bend_twist_springs, geo.bend_twist_signs)
+        ]
 
-    def __get_ref_len(self):
-        temp = []
-        for i in range(self.__n_edges):
-            n1, n2 = self.__edges[i]
-            temp.append(np.linalg.norm(self.__nodes[n1] - self.__nodes[n2]))
-        return np.stack(temp, axis=-1)
+    @staticmethod
+    def _construct_edge_combinations(edges: np.ndarray) -> np.ndarray:
+        n = edges.shape[0]
+        i, j = np.triu_indices(n, 1)
+        mask = ~np.any((edges[i, None] == edges[j][:, None, :]) | (
+            edges[i, None] == edges[j][:, None, ::-1]), axis=(1, 2))
+        valid = np.column_stack((i[mask], j[mask]))
+        return np.hstack((edges[valid[:, 0]], edges[valid[:, 1]]))
 
-    def __get_voronoi_ref_len(self):
-        ret = np.zeros(self.__n_nodes)
-        for i in range(self.__n_edges_dof):
-            n1, n2 = self.__edges[i]
-            ret[n1] += 0.5 * self.__ref_len[i]
-            ret[n2] += 0.5 * self.__ref_len[i]
-        return ret
+    def __init_curvature_midedge(self) -> typing.Tuple[np.ndarray, ...]:
+        faces = self.__face_nodes_shell
+        face_edges = self.__face_edges
+        signs = self.__sign_faces
 
-    def __get_voronoi_area(self):
-        if self.__face_nodes_shell.size:
-            ret = np.zeros(self.__n_nodes)
-            for n1, n2, n3 in self.__face_nodes_shell:
-                face_A = 0.5 * np.linalg.norm(np.linalg.cross(
-                    self.__nodes[n2] - self.__nodes[n1], self.__nodes[n3] - self.__nodes[n2]))
-                ret[n1] += face_A / 3
-                ret[n2] += face_A / 3
-                ret[n3] += face_A / 3
-            return ret
-        return np.empty(0)
-
-    def __get_face_area(self):
-        temp = []
-        for i in range(self.__n_faces):
-            n1, n2, n3 = self.__face_nodes_shell[i]
-            temp.append(0.5 * np.linalg.norm(np.linalg.cross(
-                self.__nodes[n2] - self.__nodes[n1], self.__nodes[n3] - self.__nodes[n2])))
-        return np.stack(temp, axis=-1) if len(temp) else np.empty(0)
-
-    def __get_mass_matrix(self, geom: GeomParams):
-        """
-        generate a mass matrix for specified parameters
-        """
-        m = np.zeros(self.__n_dof)
-
-        # shell faces
-        for i in range(self.__n_faces):
-            n1, n2, n3 = self.__face_nodes_shell[i]
-            face_A = 0.5 * np.linalg.norm(np.linalg.cross(
-                self.__nodes[n2] - self.__nodes[n1], self.__nodes[n3] - self.__nodes[n2]))
-            mface = self.__rho * face_A * self.__h
-
-            m[self.map_node_to_dof(n1)] += mface / 3 * np.ones(3)
-            m[self.map_node_to_dof(n2)] += mface / 3 * np.ones(3)
-            m[self.map_node_to_dof(n3)] += mface / 3 * np.ones(3)
-
-        # rod nodes
-        for i in range(self.__n_nodes):
-            if geom.axs is not None:
-                dm = self.__voronoi_ref_len[i] * geom.axs * self.__rho
-            else:
-                dm = self.__voronoi_ref_len[i] * \
-                    np.pi * self.__r0 ** 2 * self.__rho
-            m[self.map_node_to_dof(i)] += dm * np.ones(3)
-
-        # Rod edges
-        for i in range(self.__n_edges_dof):
-            if geom.axs is not None:
-                dm = self.__ref_len[i] * geom.axs * self.__rho
-            else:
-                dm = self.__ref_len[i] * np.pi * self.__r0 ** 2 * self.__rho
-            m[self.map_edge_to_dof(i)] = dm / 2 * self.__r0 ** 2
-        return np.diag(m)
-
-    def __init_curvature_midedge(self):
-        ts = np.zeros((3, 3, self.__n_faces))
-        fs = np.zeros((3, self.__n_faces))
-        cs = np.zeros((3, self.__n_faces))
-        xis = np.zeros((3, self.__n_faces))
-
+        # Vectorize face processing
+        all_p_is = self.__q[3 * faces].reshape(-1, 3, 3)
+        all_xi_is = self.__q[3*self.__n_nodes + face_edges]
         tau_0 = self.update_pre_comp_shell(self.__q)
+        all_tau0_is = tau_0[:, face_edges].transpose(1, 0, 2)
 
-        for i in range(self.__n_faces):
-            face_i_nodes = self.__face_nodes_shell[i]
-            face_i_edges = self.__face_edges[i]
+        # Compute t, f, c for all faces simultaneously
+        t, f, c = self._batch_init_tfc_midedge(all_p_is, all_tau0_is, signs)
 
-            p_is = np.zeros((3, 3))
-            xi_is = np.zeros((3, 3))
-            tau_0_is = np.zeros((3, 3))
-
-            for j in range(3):
-                p_is[: j] = self.__q[3 * face_i_nodes[j] - 3: 3 * face_i_nodes[j]]
-                xi_is[j] = self.__q[3 * self.__n_nodes + face_i_edges[j]]
-                tau_0_is[:, j] = tau_0[:, face_i_edges[j]]
-
-            s_is = self.__sign_faces[i]
-
-            xis[:, i] = xi_is
-
-            t, f, c = self.__init_t_f_c_midedge(p_is, tau_0_is, s_is)
-            ts[:, :, i] = t
-            fs[:, i] = f.T
-            cs[:, i] = c.T
-
-        return ts, fs, cs, xis
+        return t.transpose(1, 2, 0), f.T, c.T, all_xi_is.T
 
     @staticmethod
-    def __init_t_f_c_midedge(p_s: np.ndarray, tau0_s: np.ndarray, s_s: np.ndarray):
-        pi, pj, pk = p_s
+    def _batch_init_tfc_midedge(p_s: np.ndarray, tau0_s: np.ndarray, s_s: np.ndarray) -> typing.Tuple[np.ndarray, ...]:
+        # Vectorized computation for all faces
+        vi = p_s[:, 2] - p_s[:, 1]  # pk - pj
+        vj = p_s[:, 0] - p_s[:, 2]  # pi - pk
+        vk = p_s[:, 1] - p_s[:, 0]  # pj - pi
 
-        tau0_i, tau0_j, tau0_k = s_s * tau0_s
+        norms = np.linalg.norm(np.cross(vk, vi), axis=1, keepdims=True)
+        unit_norm = np.cross(vk, vi) / (norms + 1e-10)
 
-        # edges
-        vi = pk - pj
-        vj = pi - pk
-        vk = pj - pi
+        # Compute t vectors
+        t_i = np.cross(vi, unit_norm)
+        t_j = np.cross(vj, unit_norm)
+        t_k = np.cross(vk, unit_norm)
+        t_norms = np.linalg.norm([t_i, t_j, t_k], axis=2, keepdims=True)
+        t_i, t_j, t_k = (x / (t_norms + 1e-10) for x in (t_i, t_j, t_k))
 
-        li = np.linalg.norm(vi)
-        lj = np.linalg.norm(vj)
-        lk = np.linalg.norm(vk)
+        # Compute c values
+        li = np.linalg.norm(vi, axis=1, keepdims=True)
+        lj = np.linalg.norm(vj, axis=1, keepdims=True)
+        lk = np.linalg.norm(vk, axis=1, keepdims=True)
 
-        # triangle face normal
-        normal = np.linalg.cross(vk, vi)
-        A = np.linalg.norm(normal) / 2
-        unit_norm = normal / np.linalg.norm(normal)
+        dot_prods = np.einsum('ij,ijk->ik', t_i.reshape(-1, 3), tau0_s[:, 0])
+        c_i = 1 / (norms * li * dot_prods + 1e-10)
+        c_j = 1 / (norms * lj * dot_prods + 1e-10)
+        c_k = 1 / (norms * lk * dot_prods + 1e-10)
 
-        # t_i
-        t_i = np.linalg.norm(vi, unit_norm)
-        t_j = np.linalg.norm(vj, unit_norm)
-        t_k = np.linalg.norm(vk, unit_norm)
+        # Compute f values
+        f_vals = np.einsum('ij,ijk->ik', unit_norm,
+                           tau0_s * s_s[:, None, None])
 
-        # c_i
-        c_i = 1 / (A * li * np.dot((t_i / np.linalg.norm(t_i)), tau0_i))
-        c_j = 1 / (A * lj * np.dot((t_j / np.linalg.norm(t_j)), tau0_j))
-        c_k = 1 / (A * lk * np.dot((t_k / np.linalg.norm(t_k)), tau0_k))
+        return np.stack((t_i, t_j, t_k), f_vals, np.stack((c_i, c_j, c_k)))
 
-        # f_i
-        f_i = np.dot(unit_norm, tau0_i)
-        f_j = np.dot(unit_norm, tau0_j)
-        f_k = np.dot(unit_norm, tau0_k)
+    def __set_kappa(self, m1: np.ndarray, m2: np.ndarray) -> None:
+        springs = self.__bend_twist_springs
+        n_springs = len(springs)
 
-        return np.concat((t_i, t_j, t_k)), np.concat((f_i, f_j, f_k)), np.concat((c_i, c_j, c_k))
+        # Precompute all spring data
+        nodes_ind = np.array([s.nodes_ind for s in springs])
+        edges_ind = np.array([s.edges_ind for s in springs])
+        sgn = np.array([s.sgn for s in springs])
+
+        # Get positions for all springs
+        n0_dofs = 3 * nodes_ind[:, 0]
+        n1_dofs = 3 * nodes_ind[:, 1]
+        n2_dofs = 3 * nodes_ind[:, 2]
+        n0_pos = self.__q[n0_dofs[:, None] + np.arange(3)]
+        n1_pos = self.__q[n1_dofs[:, None] + np.arange(3)]
+        n2_pos = self.__q[n2_dofs[:, None] + np.arange(3)]
+
+        # Compute tangents and curvature
+        t0 = (n1_pos - n0_pos) / \
+            np.linalg.norm(n1_pos - n0_pos, axis=1, keepdims=True)
+        t1 = (n2_pos - n1_pos) / \
+            np.linalg.norm(n2_pos - n1_pos, axis=1, keepdims=True)
+        kb = 2.0 * np.cross(t0, t1) / \
+            (1.0 + np.einsum('ij,ij->i', t0, t1))[:, None]
+
+        # Compute kappa values
+        m1e = m1[edges_ind[:, 0]]
+        m2e = sgn[:, 0][:, None] * m2[edges_ind[:, 0]]
+        m1f = m1[edges_ind[:, 1]]
+        m2f = sgn[:, 1][:, None] * m2[edges_ind[:, 1]]
+
+        kappa1 = 0.5 * np.einsum('ij,ij->i', kb, m2e + m2f)
+        kappa2 = -0.5 * np.einsum('ij,ij->i', kb, m1e + m1f)
+
+        # Update springs in bulk
+        for i, spring in enumerate(springs):
+            spring.kappa_bar = np.array([kappa1[i], kappa2[i]])
+
+    def compute_reference_twist(self, springs: typing.List[bend_twist_spring.BendTwistSpring],
+                                a1: np.ndarray, tangent: np.ndarray,
+                                ref_twist: np.ndarray) -> np.ndarray:
+        edges = np.array([s.edges_ind for s in springs])
+        sgn = np.array([s.sgn for s in springs])
+
+        e0 = edges[:, 0]
+        e1 = edges[:, 1]
+        t0 = tangent[e0] * sgn[:, 0][:, None]
+        t1 = tangent[e1] * sgn[:, 1][:, None]
+        u0 = a1[e0]
+        u1 = a1[e1]
+
+        # Batch parallel transport
+        ut = self._batch_parallel_transport(u0, t0, t1)
+        ut = self._batch_rotate_axis_angle(ut, t1, ref_twist)
+
+        # Compute signed angles in bulk
+        angles = self._batch_signed_angle(ut, u1, t1)
+        return ref_twist + angles
+
+    def _batch_parallel_transport(self, u: np.ndarray, t0: np.ndarray, t1: np.ndarray) -> np.ndarray:
+        # Compute initial cross product and norms
+        b = np.cross(t0, t1)
+        b_norm = np.linalg.norm(b, axis=1, keepdims=True)
+        mask = b_norm.squeeze() < 1e-10
+
+        # Safe normalization with epsilon guard
+        safe_b_norm = np.where(b_norm < 1e-10, 1.0, b_norm)
+        b_valid = b / safe_b_norm
+
+        # Orthogonalize against t0 with safe dot product
+        dot_prod = np.einsum('ij,ij->i', b_valid, t0)
+        b_valid = b_valid - dot_prod[:, None] * t0
+
+        # Safe normalization of orthogonalized vector
+        b_valid_norm = np.linalg.norm(b_valid, axis=1, keepdims=True)
+        safe_b_valid_norm = np.where(b_valid_norm < 1e-10, 1.0, b_valid_norm)
+        b_valid = b_valid / safe_b_valid_norm
+
+        # Compute basis vectors
+        n1 = np.cross(t0, b_valid)
+        n2 = np.cross(t1, b_valid)
+
+        # Calculate transport components using einsum
+        components = (
+            np.einsum('ij,ij->i', u, t0)[:, None] * t1 +
+            np.einsum('ij,ij->i', u, n1)[:, None] * n2 +
+            np.einsum('ij,ij->i', u, b_valid)[:, None] * b_valid
+        )
+
+        # Use original vectors where directions are parallel
+        return np.where(mask[:, None], u, components)
 
     @staticmethod
-    def __construct_possible_edge_combos(edges: np.ndarray):
-        idx = [np.array([0, 0])]  # jugaad
-
-        for i in range(n_edges := np.size(edges, 0)):
-            for j in range(n_edges):
-                if not (edges[i, 0] == edges[j, 0] or edges[i, 0] == edges[j, 1] or edges[i, 1] == edges[j, 0] or edges[i, 1] == edges[j, 1]) and \
-                        not any([(n1 == i and n2 == j) or (n1 == j and n2 == i) for (n1, n2) in idx]):
-                    idx.append(np.array([i, j]))
-
-        edge_combos = np.zeros((idx_count := (np.size(idx, 1)-1), 4))
-        for i in range(np.size(idx_count)):
-            edge_combos[i] = np.concat((edges[idx[i][0]], edges[idx[i][1]]))
-
-    @staticmethod
-    def __parallel_transport(u, t1, t2) -> np.ndarray:
+    def _parallel_transport(u, t1, t2) -> np.ndarray:
         b = np.cross(t1, t2)
         if (b_norm := np.linalg.norm(b)) == 0:
             return u
@@ -339,312 +408,328 @@ class SoftRobot:
         n2 = np.cross(t2, b)
         return np.dot(u, t1) * t2 + np.dot(u, n1) * n2 + np.dot(u, b) * b
 
-    def __set_kappa(self):
-        for spring in self.__bend_twist_springs:
-            n0, n1, n2 = spring.nodes_ind
-            e0, e1 = spring.edges_ind
-
-            n0p = self.q[self.map_node_to_dof(n0)]
-            n1p = self.q[self.map_node_to_dof(n1)]
-            n2p = self.q[self.map_node_to_dof(n2)]
-
-            m1e = self.__m1[e0]
-            m2e = spring.sgn[0] * self.__m2[e0]
-            m1f = self.__m1[e1]
-            m2f = spring.sgn[1] * self.__m2[e1]
-
-            spring.kappa_bar = self.compute_kappa(
-                n0p, n1p, n2p, m1e, m2e, m1f, m2f)
-
-    """
-    Public Interface
-    """
-
-    def initialize(self, fixed_nodes) -> "SoftRobot":
-        # reference frame + material frame
-        ret = self.compute_space_parallel()
-        ret.__m1, ret.__m2 = ret.compute_material_directors(
-            ret.a1, ret.a2, ret.get_theta(ret.q0))
-
-        # natural curvature
-        ret.__set_kappa()
-
-        # reference twist
-        ret.__undef_ref_twist = ret.compute_reference_twist(
-            ret.bend_twist_springs, ret.a1, ret.tangent, np.zeros(len(self.__bend_twist_springs)))
-        ret.__ref_twist = ret.compute_reference_twist(
-            ret.bend_twist_springs, ret.a1, ret.tangent,  ret.__undef_ref_twist)
-
-        # boundary conditions
-        ret.__fixed_nodes = fixed_nodes
-        fixed_edge_indices = []
-        for i, edge in enumerate(ret.__edges):
-            if edge[0] in fixed_nodes and edge[1] in fixed_nodes:
-                fixed_edge_indices.append(i)
-        if ret.sim_params.two_d_sim:
-            fixed_edge_indices += range(ret.__n_edges_dof)
-        ret.__fixed_edges = np.array(fixed_edge_indices)
-        ret.__fixed_dof, ret.__free_dof = ret.find_fixed_free_dof(
-            ret.__fixed_nodes, ret.__fixed_edges)
-
-        return ret
-
-    def find_fixed_free_dof(self, fixed_nodes, fixed_edges):
-        # Initialize fixed DOF arrays
-        fixedDOF_nodes = np.zeros((3, len(fixed_nodes)), dtype=int)
-        fixedDOF_edges = np.zeros(len(fixed_edges), dtype=int)
-
-        # Map fixed nodes to DOFs
-        for i in range(len(fixed_nodes)):
-            fixedDOF_nodes[:, i] = self.map_node_to_dof(fixed_nodes[i])
-
-        # Flatten fixedDOF_nodes into a 1D array
-        fixedDOF_nodes_vec = fixedDOF_nodes.reshape(-1)
-
-        # Map fixed edges to DOFs
-        for i in range(len(fixed_edges)):
-            fixedDOF_edges[i] = self.map_edge_to_dof(
-                fixed_edges[i])
-
-        # Combine fixed DOFs from nodes and edges
-        fixedDOF = np.concatenate((fixedDOF_nodes_vec, fixedDOF_edges))
-
-        # Find free DOFs
-        dummy = np.ones(self.n_dof, dtype=int)
-        dummy[fixedDOF] = 0
-        freeDOF = np.where(dummy == 1)[0]
-
-        return fixedDOF, freeDOF
+    def _batch_rotate_axis_angle(self, v: np.ndarray, axis: np.ndarray, theta: np.ndarray) -> np.ndarray:
+        cos_theta = np.cos(theta)[:, None]
+        sin_theta = np.sin(theta)[:, None]
+        return (cos_theta * v +
+                sin_theta * np.cross(axis, v) +
+                (1 - cos_theta) * np.einsum('ij,ij->i', axis, v)[:, None] * axis)
 
     @staticmethod
-    def map_node_to_dof(node_num: int) -> np.ndarray:
-        return np.array([node_num * 3, node_num * 3 + 1, node_num * 3 + 2])
-
-    def map_edge_to_dof(self, edge_num: int) -> np.ndarray:
-        return self.__n_nodes * 3 + edge_num
-
-    def get_theta(self, q):
-        return q[3 * self.__n_nodes:3 * self.__n_nodes + self.__n_edges_dof + 1]
-
-    @staticmethod
-    def rotate_axis_angle(v, z, theta):
-        if theta == 0:
-            return v
-        return np.cos(theta) * v + np.sin(theta) * np.cross(z, v) + np.dot(z, v) * (1 - np.cos(theta)) * z
-
-    @staticmethod
-    def signed_angle(u, v, n):
+    def _batch_signed_angle(u: np.ndarray, v: np.ndarray, n: np.ndarray) -> np.ndarray:
         w = np.cross(u, v)
-        angle = np.atan2(np.linalg.norm(w), np.dot(u, v))
-        if (np.dot(n, w) < 0):
-            angle = -angle
-        return angle
+        # Handle scalar/vector cases
+        norm_w = np.linalg.norm(w, axis=-1, keepdims=False)
+        # Generalized dot product
+        dot_uv = np.einsum('...i,...i', u, v)
 
-    @staticmethod
-    def compute_material_directors(a1, a2, theta):
-        n_edges_dof = np.size(theta)
+        # Handle near-zero denominators
+        safe_denominator = np.where(np.abs(dot_uv) < 1e-10, 1.0, dot_uv)
+        angle = np.arctan2(norm_w, safe_denominator)
 
-        m1 = np.zeros((n_edges_dof, 3))
-        m2 = np.zeros((n_edges_dof, 3))
+        # Compute sign with safe cross product check
+        sign = np.sign(np.einsum('...i,...i', n, w))
+        return angle * sign
 
-        for i in range(n_edges_dof):
-            m1[i] = np.cos(theta[i]) * a1[i] + np.sin(theta[i]) * a2[i]
-            m2[i] = -np.sin(theta[i]) * a1[i] + np.cos(theta[i]) * a2[i]
+    def update_pre_comp_shell(self, q: np.ndarray) -> np.ndarray:
+        faces = self.__face_nodes_shell
+        face_edges = self.__face_edges
 
-        return m1, m2
+        # Compute face normals
+        v1 = q[3*faces[:, 1]] - q[3*faces[:, 0]]
+        v2 = q[3*faces[:, 2]] - q[3*faces[:, 1]]
+        face_normals = np.cross(v1, v2)
+        face_normals /= np.linalg.norm(face_normals, axis=1, keepdims=True)
 
-    def compute_time_parallel(self, a1_old, q0, q) -> typing.Tuple[np.ndarray, np.ndarray]:
-        # Should we change the interface?
-        tangent0 = self.compute_tangent(q0)
-        tangent = self.compute_tangent(q)
+        # Accumulate edge normals
+        edge_normals = np.zeros((self.__n_edges, 3))
+        np.add.at(edge_normals, face_edges.ravel(),
+                  face_normals.repeat(3, axis=0))
+        edge_counts = np.bincount(face_edges.ravel(), minlength=self.__n_edges)
+        edge_normals /= edge_counts[:, None] + 1e-10
 
-        a1 = np.zeros((self.__n_edges_dof, 3))
-        a2 = np.zeros((self.__n_edges_dof, 3))
-
-        for i in range(self.__n_edges_dof):
-            t0 = tangent0[i]
-            t = tangent[i]
-
-            a1_local = self.__parallel_transport(a1_old[i], t0, t)
-
-            a1_local -= np.dot(a1_local, t) * t
-            a1_local /= np.linalg.norm(a1_local)
-
-            a1[i] = a1_local
-            a2[i] = np.cross(t, a1_local)
-
-        return a1, a2
+        # Compute edge vectors and tau_0
+        edge_vecs = q[3*self.__edges[:, 1]] - q[3*self.__edges[:, 0]]
+        tau_0 = np.cross(edge_vecs, edge_normals)
+        tau_0 /= np.linalg.norm(tau_0, axis=1, keepdims=True)
+        return tau_0.T
 
     def compute_space_parallel(self) -> "SoftRobot":
-        """
-        Return reference frame
-        """
-        ret = copy.deepcopy(self)   # preserve original
-
+        ret = copy.deepcopy(self)
         ret.__tangent = ret.compute_tangent(ret.__q0)
 
-        # Set initial entry
-        t0 = ret.__tangent[1]
-        t1 = np.array([0, 1, 0])
-        a1Tmp = np.cross(t0, t1)
-
-        if (abs(a1Tmp) < 1e-6).all():  # ==0
-            t1 = np.array([0, 0, -1])
-            a1Tmp = np.cross(t0, t1)
-
-        ret.__a1[0] = a1Tmp / np.linalg.norm(a1Tmp)
+        # Initialize first a1 using vectorized operations
+        t0 = ret.__tangent[0]
+        rand_vec = np.array([0, 1, 0])
+        a1_init = np.cross(t0, rand_vec)
+        if np.linalg.norm(a1_init) < 1e-6:
+            rand_vec = np.array([0, 0, -1])
+            a1_init = np.cross(t0, rand_vec)
+        ret.__a1[0] = a1_init / np.linalg.norm(a1_init)
         ret.__a2[0] = np.cross(ret.__tangent[0], ret.__a1[0])
 
-        # Space parallel transport to construct the reference frame
+        # Vectorized parallel transport for subsequent edges
         for i in range(1, ret.__n_edges_dof):
-            t0 = ret.__tangent[i-1]
-            t1 = ret.__tangent[i]
-            a1_0 = ret.__a1[i-1]
-            a1_1 = ret.__parallel_transport(a1_0, t0, t1)
-            ret.__a1[i] = a1_1 / np.linalg.norm(a1_1)
-            ret.__a2[i] = np.cross(t1, ret.__a1[i])
+            t_prev = ret.__tangent[i-1]
+            t_curr = ret.__tangent[i]
+            a1_prev = ret.__a1[i-1]
+
+            ret.__a1[i] = self._parallel_transport(a1_prev, t_prev, t_curr)
+            ret.__a1[i] -= np.dot(ret.__a1[i], t_curr) * t_curr
+            ret.__a1[i] /= np.linalg.norm(ret.__a1[i])
+            ret.__a2[i] = np.cross(t_curr, ret.__a1[i])
 
         return ret
 
     def compute_tangent(self, q: np.ndarray) -> np.ndarray:
-        tangent = np.zeros((self.__n_edges_dof, 3))
-
-        for i in range(self.__n_edges_dof):
-            n0, n1 = self.__edges[i]
-            n0_pos = q[self.map_node_to_dof(n0)]
-            n1_pos = q[self.map_node_to_dof(n1)]
-            de = (n1_pos - n0_pos).T
-            tangent_vec = de / np.linalg.norm(de)
-            # Remove small non-zero terms
-            tangent_vec[np.abs(tangent_vec) < _TANGENT_THRESHOLD] = 0
-
-            tangent[i] = tangent_vec
+        edges = self.__edges[:self.__n_edges_dof]
+        n0 = edges[:, 0]
+        n1 = edges[:, 1]
+        pos0 = q.flatten()[self.map_node_to_dof(n0)]  # shape (n_edges_dof, 3)
+        pos1 = q.flatten()[self.map_node_to_dof(n1)]  # shape (n_edges_dof, 3)
+        vecs = pos1 - pos0
+        norms = np.linalg.norm(vecs, axis=1, keepdims=True)
+        norms = np.where(norms < 1e-10, 1.0, norms)  # prevent division by zero
+        tangent = vecs / norms
+        tangent[np.abs(tangent) < _TANGENT_THRESHOLD] = 0
 
         return tangent
 
     @staticmethod
-    def compute_kappa(n0, n1, n2, m1e, m2e, m1f, m2f):
-        t0 = n1 - n0 / np.linalg.norm(n1 - n0)
-        t1 = n2 - n1 / np.linalg.norm(n2 - n1)
+    def compute_kappa(n0: np.ndarray, n1: np.ndarray, n2: np.ndarray,
+                      m1e: np.ndarray, m2e: np.ndarray,
+                      m1f: np.ndarray, m2f: np.ndarray) -> np.ndarray:
+        t0 = (n1 - n0) / np.linalg.norm(n1 - n0)
+        t1 = (n2 - n1) / np.linalg.norm(n2 - n1)
         kb = 2.0 * np.cross(t0, t1) / (1.0 + np.dot(t0, t1))
+        return np.array([0.5 * np.dot(kb, m2e + m2f),
+                        -0.5 * np.dot(kb, m1e + m1f)])
 
-        kappa1 = 0.5 * np.dot(kb, m2e + m2f)
-        kappa2 = -0.5 * np.dot(kb, m1e + m1f)
+    def compute_material_directors(self, a1: np.ndarray, a2: np.ndarray, theta: np.ndarray) -> typing.Tuple[np.ndarray, np.ndarray]:
+        cos_theta = np.cos(theta)[:, None]
+        sin_theta = np.sin(theta)[:, None]
+        m1 = cos_theta * a1 + sin_theta * a2
+        m2 = -sin_theta * a1 + cos_theta * a2
+        return m1, m2
 
-        return np.stack((kappa1, kappa2), axis=0)
+    def compute_time_parallel(self, a1_old: np.ndarray, q0: np.ndarray, q: np.ndarray) -> typing.Tuple[np.ndarray, np.ndarray]:
+        tangent0 = self.compute_tangent(q0)
+        tangent = self.compute_tangent(q)
 
-    def compute_reference_twist(self, bend_twist_springs, a1, tangent, ref_twist):
-        n_twist = np.size(ref_twist)
+        # Vectorized parallel transport
+        a1_transported = self._batch_parallel_transport(
+            a1_old, tangent0, tangent)
 
-        for i in range(n_twist):
+        # Orthonormalization
+        t_dot = np.einsum('ij,ij->i', a1_transported, tangent)
+        a1 = a1_transported - tangent * t_dot[:, None]
+        a1 /= np.linalg.norm(a1, axis=1, keepdims=True)
+        a2 = np.cross(tangent, a1)
 
-            e0, e1 = bend_twist_springs[i].edges_ind
-            u0 = a1[e0]
-            u1 = a1[e1]
+        return a1, a2
 
-            t0 = bend_twist_springs[i].sgn[0] * tangent[e0]
-            t1 = bend_twist_springs[i].sgn[1] * tangent[e1]
+    def find_fixed_free_dof(self, fixed_nodes: typing.List[int], fixed_edges: typing.List[int]) -> typing.Tuple[np.ndarray, np.ndarray]:
+        # Vectorized node DOF mapping
+        node_dofs = 3 * np.array(fixed_nodes)[:, None] + np.arange(3)
+        fixed_node_dofs = node_dofs.ravel()
 
-        ut = self.__parallel_transport(u0, t0, t1)
-        ut = self.rotate_axis_angle(ut, t1, ref_twist[i])
+        # Edge DOF mapping
+        fixed_edge_dofs = 3 * self.__n_nodes + np.array(fixed_edges)
 
-        ref_twist[i] += self.signed_angle(ut, u1, t1)
+        # Combine fixed DOFs
+        fixed_dof = np.unique(np.concatenate(
+            [fixed_node_dofs, fixed_edge_dofs]))
 
-        return ref_twist
+        # Find free DOFs using set operations
+        all_dofs = np.arange(self.__n_dof)
+        free_dof = np.setdiff1d(all_dofs, fixed_dof, assume_unique=True)
 
-    # UNTESTED: Need shell model
-    def update_pre_comp_shell(self, q):
-        edge_common_to = np.zeros(self.__n_edges)
-        n_avg = np.zeros((3, self.__n_edges))
-        tau_0 = np.zeros((3, self.__n_edges))
-        e = np.zeros((3, self.__n_edges))
+        return fixed_dof, free_dof
 
-        for i in range(self.__n_faces):
-            n1, n2, n3 = self.__face_nodes_shell[i]
-            n1p = self.__q[3 * n1 - 3:3 * n1]
-            n2p = self.__q[3 * n2 - 3:3 * n2]
-            n3p = self.__q[3 * n3 - 3:3 * n3]
+    def initialize(self, fixed_nodes: typing.List[int]) -> "SoftRobot":
+        ret = self.compute_space_parallel()
 
-            # face normal
-            face_normal = np.linalg.cross(n2p - n1p, n3p - n1p)
-            face_unit_normal = face_normal * 1 / np.linalg.norm(face_normal)
+        # Vectorized material frame computation
+        theta = self.get_theta(ret.q0)
+        ret.__m1, ret.__m2 = self.compute_material_directors(
+            ret.a1, ret.a2, theta)
 
-            # face edge map
-            for edge in self.__face_edges[i]:
-                edge_common_to[edge] = edge_common_to[edge] + 1
+        # Batch curvature computation
+        ret.__set_kappa(ret.__m1, ret.__m2)
 
-                n_avg[:, edge] += face_unit_normal
-                n_avg[:, edge] /= np.linalg.norm(n_avg[:, edge])
+        # Vectorized reference twist computation
+        ret.__undef_ref_twist = self.compute_reference_twist(
+            ret.bend_twist_springs, ret.a1, ret.tangent, np.zeros(
+                len(self.__bend_twist_springs))
+        )
+        ret.__ref_twist = self.compute_reference_twist(
+            ret.bend_twist_springs, ret.a1, ret.tangent, ret.__undef_ref_twist
+        )
 
-                assert (edge_common_to[edge] < 3)
+        # Efficient boundary condition setup
+        edge_mask = np.isin(ret.__edges[:, 0], fixed_nodes) & np.isin(
+            ret.__edges[:, 1], fixed_nodes)
+        fixed_edge_indices = np.where(edge_mask)[0]
+        if ret.sim_params.two_d_sim:
+            fixed_edge_indices = np.union1d(
+                fixed_edge_indices, np.arange(ret.__n_edges_dof))
 
-        for i in range(self.__n_edges):
-            e[:, i] = q[3 * self.__edges[i, 1] - 3: 3 * self.__edges[i, 1]
-                        ] - self.__q[3 * self.__edges[i, 0] - 3: 3 * self.__edges[i, 0]]
-            tau_0 = np.linalg.cross(e[:, i], n_avg[:, i])
-            tau_0 /= np.linalg.norm(tau_0)
+        ret.__fixed_edges = fixed_edge_indices
+        ret.__fixed_dof, ret.__free_dof = ret.find_fixed_free_dof(
+            fixed_nodes, ret.__fixed_edges)
 
-        return tau_0
+        return ret
+
+    def update(self, q: np.ndarray, u: np.ndarray, a1: np.ndarray, a2: np.ndarray,
+               m1: np.ndarray, m2: np.ndarray, ref_twist: np.ndarray) -> "SoftRobot":
+        # Efficient shallow copy with numpy array views
+        ret = copy.copy(self)
+        ret.__q = q.view()
+        ret.__u = u.view()
+        ret.__a1 = a1.view()
+        ret.__a2 = a2.view()
+        ret.__m1 = m1.view()
+        ret.__m2 = m2.view()
+        ret.__ref_twist = ref_twist.view()
+        return ret
+
+    @staticmethod
+    def rotate_axis_angle(v: np.ndarray, z: np.ndarray, theta: np.ndarray) -> np.ndarray:
+        # Vectorized rotation for multiple vectors/angles
+        cos_t = np.cos(theta)[:, None]
+        sin_t = np.sin(theta)[:, None]
+        dot_prod = np.einsum('ij,ij->i', v, z)[:, None]
+        return cos_t * v + sin_t * np.cross(z, v) + (1 - cos_t) * dot_prod * z
+
+    @staticmethod
+    def signed_angle(u: np.ndarray, v: np.ndarray, n: np.ndarray) -> np.ndarray:
+        # Batch signed angle computation
+        cross_prod = np.cross(u, v)
+        angles = np.arctan2(np.linalg.norm(
+            cross_prod, axis=1), np.einsum('ij,ij->i', u, v))
+        signs = np.sign(np.einsum('ij,ij->i', n, cross_prod))
+        return angles * signs
+
+    def get_theta(self, q: np.ndarray) -> np.ndarray:
+        """ All DOF for edges (self.__n_edges_dof,)"""
+        return q[3*self.__n_nodes: 3*self.__n_nodes + self.__n_edges_dof]
 
     @property
-    def ref_len(self):
-        return self.__ref_len
+    def ref_len(self) -> np.ndarray:
+        """Reference lengths for all edges (n_edges,)"""
+        return self.__ref_len.view()
 
     @property
-    def q(self):
-        return self.__q
+    def q(self) -> np.ndarray:
+        """Current state vector (n_dof,)"""
+        return self.__q.view()
 
     @property
-    def q0(self):
-        return self.__q0
+    def q0(self) -> np.ndarray:
+        """Initial state vector (n_dof,)"""
+        return self.__q0.view()
 
     @property
-    def a1(self):
-        return self.__a1
+    def a1(self) -> np.ndarray:
+        """First reference frame directors (n_edges_dof, 3)"""
+        return self.__a1.view()
 
     @property
-    def a2(self):
-        return self.__a2
+    def a2(self) -> np.ndarray:
+        """Second reference frame directors (n_edges_dof, 3)"""
+        return self.__a2.view()
 
     @property
-    def bend_twist_springs(self):
+    def bend_twist_springs(self) -> typing.List[bend_twist_spring.BendTwistSpring]:
+        """List of bend-twist spring elements"""
         return self.__bend_twist_springs
 
     @property
-    def stretch_springs(self):
+    def stretch_springs(self) -> typing.List[stretch_spring.StretchSpring]:
+        """List of stretch spring elements"""
         return self.__stretch_springs
 
     @property
-    def EA(self):
+    def face_nodes_shell(self) -> np.ndarray:
+        """Shell face node indices (n_faces, 3)"""
+        return self.__face_nodes_shell.view()
+
+    @property
+    def EA(self) -> float:
+        """Axial stiffness"""
         return self.__EA
 
     @property
-    def EI1(self):
+    def EI1(self) -> float:
+        """First bending stiffness"""
         return self.__EI1
 
     @property
-    def EI2(self):
+    def EI2(self) -> float:
+        """Second bending stiffness"""
         return self.__EI2
 
     @property
-    def GJ(self):
+    def GJ(self) -> float:
+        """Torsional stiffness"""
         return self.__GJ
 
     @property
-    def n_dof(self):
+    def n_dof(self) -> int:
+        """Total number of degrees of freedom"""
         return self.__n_dof
 
     @property
-    def sim_params(self):
+    def sim_params(self) -> SimParams:
+        """Simulation parameters container"""
         return self.__sim_params
 
-    # Post initialize variables
-    # TODO: Make it harder to use improperly
+    @property
+    def env(self) -> environment.Environment:
+        """Environment parameters container"""
+        return self.__env
 
     @property
-    def tangent(self):
-        return self.__tangent
+    def mass_matrix(self) -> np.ndarray:
+        """Diagonal mass matrix (n_dof, n_dof)"""
+        return self.__mass_matrix.view()
 
     @property
-    def ref_twist(self):
-        return self.__ref_twist
+    def node_dof_indices(self) -> np.ndarray:
+        """Node DOF indices matrix (n_nodes, 3)"""
+        return np.arange(3 * self.__n_nodes).reshape(-1, 3)
+
+    @property
+    def end_node_dof_index(self) -> int:
+        """First edge DOF index after node DOFs"""
+        return 3 * self.__n_nodes
+
+    @property
+    def tangent(self) -> np.ndarray:
+        """Current edge tangents (n_edges_dof, 3)"""
+        return self.__tangent.view()
+
+    @property
+    def ref_twist(self) -> np.ndarray:
+        """Reference twist values (n_bend_twist_springs,)"""
+        return self.__ref_twist.view()
+
+    @property
+    def fixed_dof(self) -> np.ndarray:
+        """Indices of constrained degrees of freedom"""
+        return self.__fixed_dof.view()
+
+    @property
+    def free_dof(self) -> np.ndarray:
+        """Indices of free degrees of freedom"""
+        return self.__free_dof.view()
+
+    @property
+    def voronoi_area(self) -> np.ndarray:
+        """Voronoi area per node (n_nodes,)"""
+        return self.__voronoi_area.view()
+
+    @property
+    def face_area(self) -> np.ndarray:
+        """Face areas for shell elements (n_faces,)"""
+        return self.__face_area.view()

@@ -1,70 +1,122 @@
 import numpy as np
+from scipy.linalg import solve, LinAlgError
 
-from . import SoftRobot, fs
+from dismech import SoftRobot, fs
 
 
 class TimeStepper:
-
     def __init__(self, robot: SoftRobot, fixed_nodes):
-        self.__robot = robot.initialize(fixed_nodes)
+        self.robot = robot.initialize(fixed_nodes)
+        self.epsilon = 1e-8  # Regularization parameter
+        self.min_force = 1e-8  # Threshold for negligible forces
 
-    def step(self, robot: SoftRobot) -> SoftRobot:
-        n_dof = robot.n_dof
-        q0 = robot.q0
-        ref_twist = robot.ref_twist
+    def step(self, robot: SoftRobot = None) -> SoftRobot:
+        robot = robot or self.robot
+        params = robot.sim_params
 
-        q = robot.q0
+        # Initialize iteration variables
+        q = robot.q0.copy()
+        alpha = 1.0
         iteration = 1
-        alpha = 1
-        err = 10 * robot.sim_params.tol
-        error0 = err
-        solved = False
+        err_history = []
 
-        while not solved:
-            forces = np.zeros(n_dof)
-            jforces = np.zeros((n_dof, n_dof))
+        while True:
+            # Compute forces and Jacobians
+            forces, jacobian = self._compute_forces_and_jacobian(robot, q)
 
-            a1_iter, a2_iter = robot.compute_time_parallel(robot.a1, q0, q)
+            # Handle free DOF components
+            free_idx = robot.free_dof
+            f_free = -forces[free_idx]
+            j_free = -jacobian[np.ix_(free_idx, free_idx)]
 
-            tangent = robot.compute_tangent(q)
-            ref_twist_iter = robot.compute_reference_twist(
-                robot.bend_twist_springs, a1_iter, tangent, ref_twist)
+            # Regularized matrix solver
+            dq_free = self._safe_solve(j_free, f_free)
 
-            theta = robot.get_theta(q)
-            m1, m2 = robot.compute_material_directors(a1_iter, a2_iter, theta)
+            # Adaptive damping and update
+            alpha = self._adaptive_damping(alpha, iteration)
+            q[free_idx] -= alpha * dq_free
 
-            if len(robot.stretch_springs) > 0:
-                Fs, Js = fs.get_fs_js(robot, q)
+            # Convergence checks
+            err = np.linalg.norm(f_free)
+            err_history.append(err)
 
-                forces += Fs
-                jforces += Js
+            # Compute displacement increment
+            dq = np.zeros(robot.n_dof)
+            dq[free_idx] = alpha * dq_free
 
-            if len(robot.bend_twist_springs) > 0:
-                Fs, Js = fs.get_fb_jb(robot, q, m1, m2)
+            # Check all convergence criteria
+            disp_converged = np.max(np.abs(dq[1:robot.end_node_dof_index])) / robot.sim_params.dt < robot.sim_params.dtol
+            force_converged = err < params.tol
+            relative_converged = err < err_history[0] * params.ftol
+            iteration_limit = iteration >= params.max_iter
 
-                forces += Fs
-                jforces += Js
+            if any([force_converged, relative_converged, disp_converged, iteration_limit]):
+                break
 
-            # TODO: Not needed for rod cantilever
-            if len(robot.face_nodes_shell) > 0:
-                pass
+            iteration += 1
 
-            if "gravity" in robot.env.ext_force_list:
-                pass
+        # Final update and return
+        return self._finalize_update(robot, q)
 
-            if robot.sim_params.static_sim:
-                f = - forces
-                j = -jforces
-            else:
-                # TODO
-                pass
+    def _compute_forces_and_jacobian(self, robot, q):
+        forces = np.zeros(robot.n_dof)
+        jacobian = np.zeros((robot.n_dof, robot.n_dof))
 
-    @staticmethod
-    def newton_damper(alpha, iter):
-        if iter < 10:
+        # Compute reference frames and material directors
+        a1_iter, a2_iter = robot.compute_time_parallel(robot.a1, robot.q0, q)
+        theta = robot.get_theta(q)
+        m1, m2 = robot.compute_material_directors(a1_iter, a2_iter, theta)
+
+        # Add stretch spring contributions
+        if robot.stretch_springs:
+            Fs, Js = fs.get_fs_js_vectorized(robot, q)
+            forces += Fs
+            jacobian += Js
+
+        # Add bend/twist contributions
+        if robot.bend_twist_springs:
+            Fb, Jb = fs.get_fb_jb_vectorized(robot, q, m1, m2)
+            forces += Fb
+            jacobian += Jb
+
+        # Add gravity forces
+        if "gravity" in robot.env.ext_force_list:
+            forces += self._compute_gravity_forces(robot)
+
+        return forces, jacobian
+
+    def _safe_solve(self, J, F):
+        """Regularized matrix solver with fallback strategies"""
+        if np.linalg.norm(F) < self.min_force:
+            return np.zeros_like(F)
+
+        try:
+            # Add regularization to Jacobian
+            J_reg = J + self.epsilon * np.eye(J.shape[0])
+            return solve(J_reg, F, assume_a='pos')
+        except LinAlgError:
+            # Fallback to least squares solution
+            return np.linalg.lstsq(J_reg, F, rcond=None)[0]
+
+    def _adaptive_damping(self, alpha, iteration):
+        if iteration < 10:
             return 1.0
 
-        alpha *= 0.9
-        if alpha < 0.1:
-            return 0.1
-        return alpha
+        return max(alpha * 0.9, 0.1)
+
+    def _compute_gravity_forces(self, robot):
+        fg = np.zeros_like(robot.mass_matrix[0])
+        mass_diag = np.diag(robot.mass_matrix)
+        fg[robot.node_dof_indices] = mass_diag[robot.node_dof_indices] * robot.env.g
+        return fg
+
+    def _finalize_update(self, robot: SoftRobot, q):
+        u = (q - robot.q0) / robot.sim_params.dt
+        a1, a2 = robot.compute_time_parallel(robot.a1, robot.q0, q)
+
+        return robot.update(
+            q, u, a1, a2,
+            *robot.compute_material_directors(a1, a2, robot.get_theta(q)),
+            robot.compute_reference_twist(
+                robot.bend_twist_springs, a1, robot.compute_tangent(q), robot.ref_twist)
+        )

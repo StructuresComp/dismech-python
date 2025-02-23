@@ -49,6 +49,36 @@ def gradEs_hessEs_struct(n_dof, ind, node0p, node1p, stretch_spring):
     return dF, dJ
 
 
+def gradEs_hessEs_struct_vectorized(node0p, node1p, l_k, EA):
+    n_springs = node0p.shape[0]
+
+    edge = node1p - node0p
+    edge_len = np.linalg.norm(edge, axis=1)
+    tangent = edge / edge_len[:, None]
+    epsX = edge_len / l_k - 1.0
+
+    # Gradient computation
+    dF_unit = EA[:, None] * tangent * epsX[:, None]
+    dF_springs = np.concatenate((-dF_unit, dF_unit), axis=1)
+
+    # Hessian computation
+    Id3 = np.eye(3)
+    edge_outer = np.einsum('...i,...j->...ij', edge, edge)
+    edge_len_cubed = edge_len ** 3
+
+    term1 = (1.0 / l_k - 1.0 / edge_len)[:, None, None] * Id3[None, :, :]
+    term2 = edge_outer / edge_len_cubed[:, None, None]
+    M = EA[:, None, None] * (term1 + term2)
+
+    H_blocks = np.zeros((n_springs, 6, 6))
+    H_blocks[:, :3, :3] = M
+    H_blocks[:, 3:, 3:] = M
+    H_blocks[:, :3, 3:] = -M
+    H_blocks[:, 3:, :3] = -M
+
+    return dF_springs, H_blocks
+
+
 def gradEb_hessEb_panetta(n_dof, ind, node0, node1, node2, m1e, m2e, m1f, m2f, bend_twist_spring):
     kappa_bar = bend_twist_spring.kappa_bar
     l_k = bend_twist_spring.voronoi_len
@@ -236,3 +266,295 @@ def gradEb_hessEb_panetta(n_dof, ind, node0, node1, node2, m1e, m2e, m1f, m2f, b
     dJ = dJ.T
 
     return dF, dJ
+
+
+def cross_mat_batch(v):
+    """Batch version of cross product matrix"""
+    zeros = np.zeros_like(v[:, 0])
+    return np.array([
+        [zeros, -v[:, 2], v[:, 1]],
+        [v[:, 2], zeros, -v[:, 0]],
+        [-v[:, 1], v[:, 0], zeros]
+    ]).transpose(2, 0, 1)
+
+
+def cross_mat_batch(v):
+    """Batch cross product matrix"""
+    z = np.zeros_like(v[:, 0])
+    return np.array([
+        [z, -v[:, 2], v[:, 1]],
+        [v[:, 2], z, -v[:, 0]],
+        [-v[:, 1], v[:, 0], z]
+    ]).transpose(2, 0, 1)
+
+
+def gradEb_hessEb_panetta_vectorized(node0, node1, node2,
+                                     m1e, m2e, m1f, m2f,
+                                     kappa_bar, l_k, EI1, EI2):
+    # Input reshaping (batch_size, 3)
+    node0 = np.asarray(node0).reshape(-1, 3)
+    node1 = np.asarray(node1).reshape(-1, 3)
+    node2 = np.asarray(node2).reshape(-1, 3)
+    m1e = np.asarray(m1e).reshape(-1, 3)
+    m2e = np.asarray(m2e).reshape(-1, 3)
+    m1f = np.asarray(m1f).reshape(-1, 3)
+    m2f = np.asarray(m2f).reshape(-1, 3)
+
+    n_springs = node0.shape[0]
+    Id3 = np.eye(3)[None, :, :]  # For broadcasting
+
+    # Precompute common terms
+    ee = node1 - node0
+    ef = node2 - node1
+    norm_e = np.linalg.norm(ee, axis=1)
+    norm_f = np.linalg.norm(ef, axis=1)
+    te = ee / norm_e[:, None]
+    tf = ef / norm_f[:, None]
+
+    chi = 1.0 + np.sum(te * tf, axis=1)
+    chi_inv = 1.0 / chi
+    kb = 2.0 * np.cross(te, tf) * chi_inv[:, None]
+
+    tilde_t = (te + tf) * chi_inv[:, None]
+    tilde_d1 = (m1e + m1f) * chi_inv[:, None]
+    tilde_d2 = (m2e + m2f) * chi_inv[:, None]
+
+    # Curvatures
+    kappa1 = 0.5 * np.sum(kb * (m2e + m2f), axis=1)
+    kappa2 = -0.5 * np.sum(kb * (m1e + m1f), axis=1)
+
+    # First derivatives
+    Dkappa1De = (1.0 / norm_e[:, None]) * \
+        (-kappa1[:, None] * tilde_t + np.cross(tf, tilde_d2))
+    Dkappa1Df = (1.0 / norm_f[:, None]) * \
+        (-kappa1[:, None] * tilde_t - np.cross(te, tilde_d2))
+    Dkappa2De = (1.0 / norm_e[:, None]) * \
+        (-kappa2[:, None] * tilde_t - np.cross(tf, tilde_d1))
+    Dkappa2Df = (1.0 / norm_f[:, None]) * \
+        (-kappa2[:, None] * tilde_t + np.cross(te, tilde_d1))
+
+    # Gradient assembly
+    gradKappa = np.zeros((n_springs, 11, 2))
+    gradKappa[:, 0:3, 0] = -Dkappa1De
+    gradKappa[:, 3:6, 0] = Dkappa1De - Dkappa1Df
+    gradKappa[:, 6:9, 0] = Dkappa1Df
+    gradKappa[:, 0:3, 1] = -Dkappa2De
+    gradKappa[:, 3:6, 1] = Dkappa2De - Dkappa2Df
+    gradKappa[:, 6:9, 1] = Dkappa2Df
+
+    # Twist terms
+    gradKappa[:, 9, 0] = -0.5 * np.sum(kb * m1e, axis=1)
+    gradKappa[:, 10, 0] = -0.5 * np.sum(kb * m1f, axis=1)
+    gradKappa[:, 9, 1] = -0.5 * np.sum(kb * m2e, axis=1)
+    gradKappa[:, 10, 1] = -0.5 * np.sum(kb * m2f, axis=1)
+
+    # Second derivatives
+    norm2_e = norm_e**2
+    norm2_f = norm_f**2
+
+    # Helper functions for batch outer products
+    def batch_outer(a, b):
+        return np.einsum('...i,...j->...ij', a, b)
+
+    # Kappa1 second derivatives
+    tt_o_tt = batch_outer(tilde_t, tilde_t)
+    tf_c_d2t = np.cross(tf, tilde_d2)
+    tf_c_d2t_o_tt = batch_outer(tf_c_d2t, tilde_t)
+    tt_o_tf_c_d2t = batch_outer(tilde_t, tf_c_d2t)
+    kb_o_d2e = batch_outer(kb, m2e)
+
+    D2kappa1De2 = (1/norm2_e[:, None, None])*(2*kappa1[:, None, None]*tt_o_tt - tf_c_d2t_o_tt - tt_o_tf_c_d2t) \
+        - (kappa1[:, None, None]/(chi[:, None, None]*norm2_e[:, None, None]))*(Id3 - batch_outer(te, te)) \
+        + (1/(2*norm2_e[:, None, None]))*kb_o_d2e
+
+    te_c_d2t = np.cross(te, tilde_d2)
+    te_c_d2t_o_tt = batch_outer(te_c_d2t, tilde_t)
+    tt_o_te_c_d2t = batch_outer(tilde_t, te_c_d2t)
+    kb_o_d2f = batch_outer(kb, m2f)
+
+    D2kappa1Df2 = (1/norm2_f[:, None, None])*(2*kappa1[:, None, None]*tt_o_tt + te_c_d2t_o_tt + tt_o_te_c_d2t) \
+        - (kappa1[:, None, None]/(chi[:, None, None]*norm2_f[:, None, None]))*(Id3 - batch_outer(tf, tf)) \
+        + (1/(2*norm2_f[:, None, None]))*kb_o_d2f
+
+    te_o_tf = batch_outer(te, tf)
+    D2kappa1DeDf = (-kappa1[:, None, None]/(chi[:, None, None]*norm_e[:, None, None]*norm_f[:, None, None]))*(Id3 + te_o_tf) \
+        + (1/(norm_e[:, None, None]*norm_f[:, None, None]))*(2*kappa1[:, None, None]*tt_o_tt
+                                                             - tf_c_d2t_o_tt + tt_o_te_c_d2t - cross_mat_batch(tilde_d2))
+
+    # Kappa2 second derivatives
+    tf_c_d1t = np.cross(tf, tilde_d1)
+    tf_c_d1t_o_tt = batch_outer(tf_c_d1t, tilde_t)
+    tt_o_tf_c_d1t = batch_outer(tilde_t, tf_c_d1t)
+    kb_o_d1e = batch_outer(kb, m1e)
+
+    D2kappa2De2 = (1/norm2_e[:, None, None])*(2*kappa2[:, None, None]*tt_o_tt + tf_c_d1t_o_tt + tt_o_tf_c_d1t) \
+        - (kappa2[:, None, None]/(chi[:, None, None]*norm2_e[:, None, None]))*(Id3 - batch_outer(te, te)) \
+        - (1/(2*norm2_e[:, None, None]))*kb_o_d1e
+
+    te_c_d1t = np.cross(te, tilde_d1)
+    te_c_d1t_o_tt = batch_outer(te_c_d1t, tilde_t)
+    tt_o_te_c_d1t = batch_outer(tilde_t, te_c_d1t)
+    kb_o_d1f = batch_outer(kb, m1f)
+
+    D2kappa2Df2 = (1/norm2_f[:, None, None])*(2*kappa2[:, None, None]*tt_o_tt - te_c_d1t_o_tt - tt_o_te_c_d1t) \
+        - (kappa2[:, None, None]/(chi[:, None, None]*norm2_f[:, None, None]))*(Id3 - batch_outer(tf, tf)) \
+        - (1/(2*norm2_f[:, None, None]))*kb_o_d1f
+
+    D2kappa2DeDf = (-kappa2[:, None, None]/(chi[:, None, None]*norm_e[:, None, None]*norm_f[:, None, None]))*(Id3 + te_o_tf) \
+        + (1/(norm_e[:, None, None]*norm_f[:, None, None]))*(2*kappa2[:, None, None]*tt_o_tt
+                                                             + tf_c_d1t_o_tt - tt_o_te_c_d1t + cross_mat_batch(tilde_d1))
+
+    # Twist terms
+    D2kappa1Dthetae2 = -0.5 * np.sum(kb * m2e, axis=1)
+    D2kappa1Dthetaf2 = -0.5 * np.sum(kb * m2f, axis=1)
+    D2kappa2Dthetae2 = 0.5 * np.sum(kb * m1e, axis=1)
+    D2kappa2Dthetaf2 = 0.5 * np.sum(kb * m1f, axis=1)
+
+    # Coupled terms (corrected)
+    D2kappa1DeDthetae = (1/norm_e[:, None, None]) * (
+        0.5 * np.einsum('sij,sjk->sik', batch_outer(kb, m1e),
+                        tilde_t[:, :, None])
+        - (1/chi[:, None, None]) * np.cross(tf, m1e)[:, :, None]
+    )
+
+    D2kappa1DeDthetaf = (1/norm_e[:, None, None]) * (
+        0.5 * np.einsum('sij,sjk->sik', batch_outer(kb, m1f),
+                        tilde_t[:, :, None])
+        - (1/chi[:, None, None]) * np.cross(tf, m1f)[:, :, None]
+    )
+
+    D2kappa1DfDthetae = (1/norm_f[:, None, None]) * (
+        0.5 * np.einsum('sij,sjk->sik', batch_outer(kb, m1e),
+                        tilde_t[:, :, None])
+        + (1/chi[:, None, None]) * np.cross(te, m1e)[:, :, None]
+    )
+
+    D2kappa1DfDthetaf = (1/norm_f[:, None, None]) * (
+        0.5 * np.einsum('sij,sjk->sik', batch_outer(kb, m1f),
+                        tilde_t[:, :, None])
+        + (1/chi[:, None, None]) * np.cross(te, m1f)[:, :, None]
+    )
+
+    # Similar corrections for D2kappa2 terms
+    D2kappa2DeDthetae = (1/norm_e[:, None, None]) * (
+        0.5 * np.einsum('sij,sjk->sik', batch_outer(kb, m2e),
+                        tilde_t[:, :, None])
+        - (1/chi[:, None, None]) * np.cross(tf, m2e)[:, :, None]
+    )
+
+    D2kappa2DeDthetaf = (1/norm_e[:, None, None]) * (
+        0.5 * np.einsum('sij,sjk->sik', batch_outer(kb, m2f),
+                        tilde_t[:, :, None])
+        - (1/chi[:, None, None]) * np.cross(tf, m2f)[:, :, None]
+    )
+
+    D2kappa2DfDthetae = (1/norm_f[:, None, None]) * (
+        0.5 * np.einsum('sij,sjk->sik', batch_outer(kb, m2e),
+                        tilde_t[:, :, None])
+        + (1/chi[:, None, None]) * np.cross(te, m2e)[:, :, None]
+    )
+
+    D2kappa2DfDthetaf = (1/norm_f[:, None, None]) * (
+        0.5 * np.einsum('sij,sjk->sik', batch_outer(kb, m2f),
+                        tilde_t[:, :, None])
+        + (1/chi[:, None, None]) * np.cross(te, m2f)[:, :, None]
+    )
+
+    def batch_assign_blocks(DDkappa, D2De2, D2DeDf, D2DfDe, D2Df2, D2t1, D2t2, D2ct):
+        # Position blocks (unchanged)
+        DDkappa[:, :3, :3] = D2De2
+        DDkappa[:, :3, 3:6] = -D2De2 + D2DeDf
+        DDkappa[:, :3, 6:9] = -D2DeDf
+
+        DDkappa[:, 3:6, :3] = -D2De2 + D2DfDe
+        DDkappa[:, 3:6, 3:6] = D2De2 - D2DeDf - D2DfDe + D2Df2
+        DDkappa[:, 3:6, 6:9] = D2DeDf - D2Df2
+
+        DDkappa[:, 6:9, :3] = -D2DfDe
+        DDkappa[:, 6:9, 3:6] = D2DfDe - D2Df2
+        DDkappa[:, 6:9, 6:9] = D2Df2
+
+        # Twist terms (unchanged)
+        DDkappa[:, 9, 9] = D2t1
+        DDkappa[:, 10, 10] = D2t2
+
+        # Corrected coupled terms handling
+        # For column 9 (theta_e)
+        # Column entries (keep as 3D arrays)
+        DDkappa[:, :3, 9:10] = -D2ct[0][0]  # shape (n, 3, 1)
+        DDkappa[:, 3:6, 9:10] = D2ct[0][0] - D2ct[0][1]
+        DDkappa[:, 6:9, 9:10] = D2ct[0][1]
+
+        # Row entries (transpose and maintain 3D structure)
+        DDkappa[:, 9:10, :3] = - \
+            D2ct[0][0].transpose(0, 2, 1)  # shape (n, 1, 3)
+        DDkappa[:, 9:10, 3:6] = (D2ct[0][0] - D2ct[0][1]).transpose(0, 2, 1)
+        DDkappa[:, 9:10, 6:9] = D2ct[0][1].transpose(0, 2, 1)
+
+        # For column 10 (theta_f)
+        # Column entries
+        DDkappa[:, :3, 10:11] = -D2ct[1][0]
+        DDkappa[:, 3:6, 10:11] = D2ct[1][0] - D2ct[1][1]
+        DDkappa[:, 6:9, 10:11] = D2ct[1][1]
+
+        # Row entries
+        DDkappa[:, 10:11, :3] = -D2ct[1][0].transpose(0, 2, 1)
+        DDkappa[:, 10:11, 3:6] = (D2ct[1][0] - D2ct[1][1]).transpose(0, 2, 1)
+        DDkappa[:, 10:11, 6:9] = D2ct[1][1].transpose(0, 2, 1)
+
+    # Initialize Hessians
+    DDkappa1 = np.zeros((n_springs, 11, 11))
+    DDkappa2 = np.zeros((n_springs, 11, 11))
+
+    # Assign blocks for DDkappa1
+    batch_assign_blocks(DDkappa1,
+                        D2kappa1De2,
+                        D2kappa1DeDf,
+                        # D2DfDe is transpose of DeDf
+                        D2kappa1DeDf.transpose(0, 2, 1),
+                        D2kappa1Df2,
+                        D2kappa1Dthetae2,
+                        D2kappa1Dthetaf2,
+                        [(D2kappa1DeDthetae, D2kappa1DfDthetae),
+                         (D2kappa1DeDthetaf, D2kappa1DfDthetaf)])
+
+    # Assign blocks for DDkappa2
+    batch_assign_blocks(DDkappa2,
+                        D2kappa2De2,
+                        D2kappa2DeDf,
+                        D2kappa2DeDf.transpose(0, 2, 1),
+                        D2kappa2Df2,
+                        D2kappa2Dthetae2,
+                        D2kappa2Dthetaf2,
+                        [(D2kappa2DeDthetae, D2kappa2DfDthetae),
+                         (D2kappa2DeDthetaf, D2kappa2DfDthetaf)])
+
+    # Final energy computations
+    EIMat = np.zeros((n_springs, 2, 2))
+    EIMat[:, 0, 0] = EI1  # Shape (n_springs, 2, 2)
+    EIMat[:, 1, 1] = EI2
+    dkappa = np.stack([kappa1, kappa2], axis=1) - \
+        kappa_bar  # Shape (n_springs, 2)
+
+    # Compute forces
+    dF_springs = np.einsum('sij,sjk,sk->si', gradKappa,
+                           EIMat, dkappa) / l_k[:, None]
+
+    # First term: gradKappa @ EIMat @ gradKappa^T / l_k
+    term1 = np.einsum('sij,sjk,slk->sil', gradKappa, EIMat,
+                      gradKappa) / l_k[:, None, None]
+
+    # Second term: (dkappa^T EIMat / l_k) * (DDkappa1 + DDkappa2)
+    # Compute coefficient matrix (n_springs, 2)
+    temp = np.einsum('si,sji->sj', dkappa, EIMat) / l_k[:, None]
+
+    # Stack Hessians (n_springs, 2, 11, 11)
+    stacked_hessians = np.stack([DDkappa1, DDkappa2], axis=1)
+
+    # Contract coefficients with Hessians
+    term2 = np.einsum('sj,sjkl->skl', temp, stacked_hessians)
+
+    # Combine terms
+    dJ_springs = term1 + term2  # Shape (n_springs, 11, 11)
+
+    return dF_springs, dJ_springs

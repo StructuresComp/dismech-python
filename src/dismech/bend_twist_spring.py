@@ -1,9 +1,9 @@
 import numpy as np
 
-class BendingTwistingSpring:
+class BendTwistSpring:
     def __init__(self, nodes_edges_index: np.ndarray, signs: np.ndarray, kappa_bar: np.ndarray, ref_twist: float, robot, optional_stiffnesses_EI: np.ndarray = None, optional_stiffnesses_GJ: float = None):
         """
-        Constructor to initialize a BendingTwistingSpring object.
+        Constructor to initialize a BendTwistSpring object.
 
         :param nodes_edges_index: Indices of nodes and edges involved in bending/twisting.
         :param signs: Signs associated with the bending/twisting.

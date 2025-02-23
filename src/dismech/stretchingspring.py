@@ -1,5 +1,4 @@
 import numpy as np
-from softrobot import SoftRobot
 
 class StretchingSpring:
     def __init__(self, undef_len: float, nodes_index: np.ndarray, SoftRobot, optional_stiffness: float = None):
@@ -14,8 +13,8 @@ class StretchingSpring:
         self.stiff = optional_stiffness if optional_stiffness is not None else SoftRobot.__EA
         self.ref_len = undef_len
         self.nodes_ind = nodes_index
-        self.ind = np.concatenate((SoftRobot.__map_node_to_dof(nodes_index[0]), 
-                                   SoftRobot.__map_node_to_dof(nodes_index[1])))
+        self.ind = np.concatenate((SoftRobot.map_node_to_dof(self.nodes_ind[0]), 
+                                   SoftRobot.map_node_to_dof(self.nodes_ind[1])), axis=0)
         
         # Initialize dF and dJ
         self.dF = np.zeros(6)

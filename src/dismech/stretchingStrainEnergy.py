@@ -52,14 +52,14 @@ class StretchingStrainEnergy:
         return self.E
 
     def grad_and_hess_energy_stretch_linear_elastic(self, node0: np.ndarray, node1: np.ndarray, l_eff: float, EA: float) -> Tuple[np.ndarray, np.ndarray]:
-        self.get_strain_stretch_edge2D(node0, node1, l_eff)
+        self.eps = self.get_strain_stretch_edge2D(node0, node1, l_eff)
         self.grad_eps, self.hess_eps = self.grad_and_hess_strain_stretch_edge2D(node0, node1, l_eff)
 
         gradE_strain = EA * self.eps * l_eff
         hessE_strain = EA * l_eff
 
         self.gradE = gradE_strain * self.grad_eps
-        self.hessE = gradE_strain * self.hess_eps + hessE_strain * np.outer(self.grad_eps, self.grad_eps)
+        self.hessE = gradE_strain * self.hess_eps + (self.grad_eps.T * hessE_strain * self.grad_eps)
         self.F = -self.gradE.T
         self.J = -self.hessE
 

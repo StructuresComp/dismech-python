@@ -418,9 +418,7 @@ class SoftRobot:
     @staticmethod
     def _batch_signed_angle(u: np.ndarray, v: np.ndarray, n: np.ndarray) -> np.ndarray:
         w = np.cross(u, v)
-        # Handle scalar/vector cases
         norm_w = np.linalg.norm(w, axis=-1, keepdims=False)
-        # Generalized dot product
         dot_uv = np.einsum('...i,...i', u, v)
 
         # Handle near-zero denominators
@@ -458,7 +456,7 @@ class SoftRobot:
         ret = copy.deepcopy(self)
         ret.__tangent = ret.compute_tangent(ret.__q0)
 
-        # Initialize first a1 using vectorized operations
+        # Initialize first a1
         t0 = ret.__tangent[0]
         rand_vec = np.array([0, 1, 0])
         a1_init = np.cross(t0, rand_vec)
@@ -468,7 +466,7 @@ class SoftRobot:
         ret.__a1[0] = a1_init / np.linalg.norm(a1_init)
         ret.__a2[0] = np.cross(ret.__tangent[0], ret.__a1[0])
 
-        # Vectorized parallel transport for subsequent edges
+        # Iterative parallel transport (depends on previous a1)
         for i in range(1, ret.__n_edges_dof):
             t_prev = ret.__tangent[i-1]
             t_curr = ret.__tangent[i]
@@ -516,7 +514,6 @@ class SoftRobot:
         tangent0 = self.compute_tangent(q0)
         tangent = self.compute_tangent(q)
 
-        # Vectorized parallel transport
         a1_transported = self._batch_parallel_transport(
             a1_old, tangent0, tangent)
 
@@ -547,17 +544,18 @@ class SoftRobot:
         return fixed_dof, free_dof
 
     def initialize(self, fixed_nodes: typing.List[int]) -> "SoftRobot":
+        """ Return a SoftRobot object prepared for timestepping """
         ret = self.compute_space_parallel()
 
-        # Vectorized material frame computation
+        # Material frame computation
         theta = self.get_theta(ret.q0)
         ret.__m1, ret.__m2 = self.compute_material_directors(
             ret.a1, ret.a2, theta)
 
-        # Batch curvature computation
+        # Curvature computation
         ret.__set_kappa(ret.__m1, ret.__m2)
 
-        # Vectorized reference twist computation
+        # Reference twist computation
         ret.__undef_ref_twist = self.compute_reference_twist(
             ret.bend_twist_springs, ret.a1, ret.tangent, np.zeros(
                 len(self.__bend_twist_springs))
@@ -566,7 +564,7 @@ class SoftRobot:
             ret.bend_twist_springs, ret.a1, ret.tangent, ret.__undef_ref_twist
         )
 
-        # Efficient boundary condition setup
+        # Boundary condition setup
         edge_mask = np.isin(ret.__edges[:, 0], fixed_nodes) & np.isin(
             ret.__edges[:, 1], fixed_nodes)
         fixed_edge_indices = np.where(edge_mask)[0]
@@ -582,7 +580,6 @@ class SoftRobot:
 
     def update(self, q: np.ndarray, u: np.ndarray, a1: np.ndarray, a2: np.ndarray,
                m1: np.ndarray, m2: np.ndarray, ref_twist: np.ndarray) -> "SoftRobot":
-        # Efficient shallow copy with numpy array views
         ret = copy.copy(self)
         ret.__q = q.view()
         ret.__u = u.view()
@@ -595,7 +592,6 @@ class SoftRobot:
 
     @staticmethod
     def rotate_axis_angle(v: np.ndarray, z: np.ndarray, theta: np.ndarray) -> np.ndarray:
-        # Vectorized rotation for multiple vectors/angles
         cos_t = np.cos(theta)[:, None]
         sin_t = np.sin(theta)[:, None]
         dot_prod = np.einsum('ij,ij->i', v, z)[:, None]
@@ -603,7 +599,6 @@ class SoftRobot:
 
     @staticmethod
     def signed_angle(u: np.ndarray, v: np.ndarray, n: np.ndarray) -> np.ndarray:
-        # Batch signed angle computation
         cross_prod = np.cross(u, v)
         angles = np.arctan2(np.linalg.norm(
             cross_prod, axis=1), np.einsum('ij,ij->i', u, v))

@@ -4,7 +4,7 @@ import typing
 
 import numpy as np
 
-from . import environment, geometry, bendingtwistingspring
+from . import environment, geometry, bendingtwistingspring, stretch_spring
 
 
 @dataclasses.dataclass
@@ -53,6 +53,8 @@ class SoftRobot:
     def __init__(self, geom: GeomParams, material: Material,
                  geo: geometry.Geometry, sim_params: SimParams,
                  environment: environment.Environment):
+        self.__sim_params = sim_params
+
         # Store important parameters as local vars for symmetry
         self.__r0 = geom.rod_r0
         self.__h = geom.shell_h
@@ -158,8 +160,14 @@ class SoftRobot:
             self.__init_xis = np.empty(0)
 
         # Springs
+        n_rod_springs = np.size(geo.rod_stretch_springs, 0)
+        self.__stretch_springs = [stretch_spring.StretchSpring(
+            self.ref_len[i], spring, self) for i, spring in enumerate(geo.rod_stretch_springs)]
+        self.__stretch_springs += [stretch_spring.StretchSpring(
+            self.ref_len[i + n_rod_springs], spring, self, self.__ks[i + n_rod_springs]) for i, spring in enumerate(geo.shell_stretch_springs)]
+
         self.__bend_twist_springs = [
-            bendingtwistingspring.BendingTwistingSpring(spring, sign, np.ndarray([0, 0]), 0, self) for spring, sign in zip(geo.bend_twist_springs, geo.bend_twist_signs)]
+            bendingtwistingspring.BendingTwistingSpring(spring, sign, np.array([0, 0]), 0, self) for spring, sign in zip(geo.bend_twist_springs, geo.bend_twist_signs)]
 
     def __get_ref_len(self):
         temp = []
@@ -315,13 +323,6 @@ class SoftRobot:
             edge_combos[i] = np.concat((edges[idx[i][0]], edges[idx[i][1]]))
 
     @staticmethod
-    def map_node_to_dof(node_num: int) -> np.ndarray:
-        return np.array([node_num * 3, node_num * 3 + 1, node_num * 3 + 2])
-
-    def map_edge_to_dof(self, edge_num: int) -> np.ndarray:
-        return self.__n_nodes * 3 + edge_num
-
-    @staticmethod
     def __parallel_transport(u, t1, t2) -> np.ndarray:
         b = np.cross(t1, t2)
         if (b_norm := np.linalg.norm(b)) == 0:
@@ -338,9 +339,92 @@ class SoftRobot:
         n2 = np.cross(t2, b)
         return np.dot(u, t1) * t2 + np.dot(u, n1) * n2 + np.dot(u, b) * b
 
+    def __set_kappa(self):
+        for spring in self.__bend_twist_springs:
+            n0, n1, n2 = spring.nodes_ind
+            e0, e1 = spring.edges_ind
+
+            n0p = self.q[self.map_node_to_dof(n0)]
+            n1p = self.q[self.map_node_to_dof(n1)]
+            n2p = self.q[self.map_node_to_dof(n2)]
+
+            m1e = self.__m1[e0]
+            m2e = spring.sgn[0] * self.__m2[e0]
+            m1f = self.__m1[e1]
+            m2f = spring.sgn[1] * self.__m2[e1]
+
+            spring.kappa_bar = self.compute_kappa(
+                n0p, n1p, n2p, m1e, m2e, m1f, m2f)
+
     """
     Public Interface
     """
+
+    def initialize(self, fixed_nodes) -> "SoftRobot":
+        # reference frame + material frame
+        ret = self.compute_space_parallel()
+        ret.__m1, ret.__m2 = ret.compute_material_directors(
+            ret.a1, ret.a2, ret.get_theta(ret.q0))
+
+        # natural curvature
+        ret.__set_kappa()
+
+        # reference twist
+        ret.__undef_ref_twist = ret.compute_reference_twist(
+            ret.bend_twist_springs, ret.a1, ret.tangent, np.zeros(len(self.__bend_twist_springs)))
+        ret.__ref_twist = ret.compute_reference_twist(
+            ret.bend_twist_springs, ret.a1, ret.tangent,  ret.__undef_ref_twist)
+
+        # boundary conditions
+        ret.__fixed_nodes = fixed_nodes
+        fixed_edge_indices = []
+        for i, edge in enumerate(ret.__edges):
+            if edge[0] in fixed_nodes and edge[1] in fixed_nodes:
+                fixed_edge_indices.append(i)
+        if ret.sim_params.two_d_sim:
+            fixed_edge_indices += range(ret.__n_edges_dof)
+        ret.__fixed_edges = np.array(fixed_edge_indices)
+        ret.__fixed_dof, ret.__free_dof = ret.find_fixed_free_dof(
+            ret.__fixed_nodes, ret.__fixed_edges)
+
+        return ret
+
+    def find_fixed_free_dof(self, fixed_nodes, fixed_edges):
+        # Initialize fixed DOF arrays
+        fixedDOF_nodes = np.zeros((3, len(fixed_nodes)), dtype=int)
+        fixedDOF_edges = np.zeros(len(fixed_edges), dtype=int)
+
+        # Map fixed nodes to DOFs
+        for i in range(len(fixed_nodes)):
+            fixedDOF_nodes[:, i] = self.map_node_to_dof(fixed_nodes[i])
+
+        # Flatten fixedDOF_nodes into a 1D array
+        fixedDOF_nodes_vec = fixedDOF_nodes.reshape(-1)
+
+        # Map fixed edges to DOFs
+        for i in range(len(fixed_edges)):
+            fixedDOF_edges[i] = self.map_edge_to_dof(
+                fixed_edges[i])
+
+        # Combine fixed DOFs from nodes and edges
+        fixedDOF = np.concatenate((fixedDOF_nodes_vec, fixedDOF_edges))
+
+        # Find free DOFs
+        dummy = np.ones(self.n_dof, dtype=int)
+        dummy[fixedDOF] = 0
+        freeDOF = np.where(dummy == 1)[0]
+
+        return fixedDOF, freeDOF
+
+    @staticmethod
+    def map_node_to_dof(node_num: int) -> np.ndarray:
+        return np.array([node_num * 3, node_num * 3 + 1, node_num * 3 + 2])
+
+    def map_edge_to_dof(self, edge_num: int) -> np.ndarray:
+        return self.__n_nodes * 3 + edge_num
+
+    def get_theta(self, q):
+        return q[3 * self.__n_nodes:3 * self.__n_nodes + self.__n_edges_dof + 1]
 
     @staticmethod
     def rotate_axis_angle(v, z, theta):
@@ -355,8 +439,7 @@ class SoftRobot:
         if (np.dot(n, w) < 0):
             angle = -angle
         return angle
-    
-    # UNTESTED: cantilever too simple
+
     @staticmethod
     def compute_material_directors(a1, a2, theta):
         n_edges_dof = np.size(theta)
@@ -439,7 +522,6 @@ class SoftRobot:
 
         return tangent
 
-    # UNTESTED: not used in timestepper
     @staticmethod
     def compute_kappa(n0, n1, n2, m1e, m2e, m1f, m2f):
         t0 = n1 - n0 / np.linalg.norm(n1 - n0)
@@ -503,7 +585,7 @@ class SoftRobot:
             tau_0 /= np.linalg.norm(tau_0)
 
         return tau_0
-    
+
     @property
     def ref_len(self):
         return self.__ref_len
@@ -525,8 +607,16 @@ class SoftRobot:
         return self.__a2
 
     @property
-    def bend_twist_spring(self):
+    def bend_twist_springs(self):
         return self.__bend_twist_springs
+
+    @property
+    def stretch_springs(self):
+        return self.__stretch_springs
+
+    @property
+    def EA(self):
+        return self.__EA
 
     @property
     def EI1(self):
@@ -535,8 +625,26 @@ class SoftRobot:
     @property
     def EI2(self):
         return self.__EI2
-    
+
     @property
     def GJ(self):
         return self.__GJ
-    
+
+    @property
+    def n_dof(self):
+        return self.__n_dof
+
+    @property
+    def sim_params(self):
+        return self.__sim_params
+
+    # Post initialize variables
+    # TODO: Make it harder to use improperly
+
+    @property
+    def tangent(self):
+        return self.__tangent
+
+    @property
+    def ref_twist(self):
+        return self.__ref_twist

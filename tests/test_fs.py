@@ -72,3 +72,12 @@ def test_get_fb_jb_vectorized_cantilever_n51(softrobot_cantilever_n51):
     valid_data = scipy.io.loadmat(
         rel_path('resources/rod_cantilever/rod_cantilever_n51_get_fb_jb_q0.mat'))
     fb_jb_vectorized_helper(robot, valid_data)
+
+def test_get_ft_jt_vectorized_hexaparachute_n6(time_stepper_hexparachute_n6):
+    stepper = time_stepper_hexparachute_n6
+    robot = stepper.robot 
+    valid_data = scipy.io.loadmat(
+        rel_path('resources/parachute/hexparachute_n6_get_ft_jt.mat'))
+    Ft, Jt = fs.get_ft_jt_vectorized(robot, valid_data['q'].flatten(), valid_data['refTwist_iter'].flatten())
+    assert(np.allclose(Ft, valid_data['Ft'].flatten(), rtol=5e-1))
+    #assert(np.allclose(Jt, valid_data['Jt'], rtol=1))

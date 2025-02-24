@@ -548,3 +548,86 @@ def gradEb_hessEb_panetta_vectorized(node0, node1, node2,
     dJ_springs = term1 + term2  # Shape (n_springs, 11, 11)
 
     return dF_springs, dJ_springs
+
+def gradEt_hessEt_panetta_vectorized(n_dof, ind, node0, node1, node2, theta_e, theta_f, refTwist, l_k, GJ, undef_refTwist):
+    N = node0.shape[0]  # Number of springs in the batch
+    
+    # Edge vectors
+    ee = node1 - node0
+    ef = node2 - node1
+    
+    # Norms and tangents
+    norm_e = np.linalg.norm(ee, axis=1, keepdims=True)
+    norm_f = np.linalg.norm(ef, axis=1, keepdims=True)
+    te = ee / norm_e
+    tf = ef / norm_f
+    
+    # Dot product and chi
+    dot_te_tf = np.sum(te * tf, axis=1, keepdims=True)
+    chi = 1.0 + dot_te_tf
+    
+    # Curvature binormal
+    kb = 2.0 * np.cross(te, tf, axis=1) / chi
+    
+    # tilde_t
+    tilde_t = (te + tf) / chi
+    
+    # Reduce indexing to only the 11 relevant DOFs
+    spring_dofs = ind[:, :11]
+    
+    # Initialize reduced gradTwist (N, 11)
+    gradTwist = np.zeros((N, 11))
+    gradTwist[:, 0:3] = (-0.5 / norm_e) * kb
+    gradTwist[:, 6:9] = (0.5 / norm_f) * kb
+    gradTwist[:, 3:6] = - (gradTwist[:, 0:3] + gradTwist[:, 6:9])
+    gradTwist[:, 9] = -1.0
+    gradTwist[:, 10] = 1.0
+    
+    # Cross product matrices
+    cross_te = cross_mat_batch(te)
+    cross_tf = cross_mat_batch(tf)
+    
+    # Compute second derivatives
+    norm2_e = norm_e ** 2
+    norm2_f = norm_f ** 2
+    norm_e_norm_f = norm_e * norm_f
+
+    D2mDe2 = (-0.5 / norm2_e)[:, :, np.newaxis] * (
+        np.einsum('ni,nj->nij', kb, te + tilde_t) + (2.0 / chi)[:, :, np.newaxis] * cross_tf
+    )
+    D2mDf2 = (-0.5 / norm2_f)[:, :, np.newaxis] * (
+        np.einsum('ni,nj->nij', kb, tf + tilde_t) + (2.0 / chi)[:, :, np.newaxis] * cross_te
+    )
+    D2mDeDf = (0.5 / norm_e_norm_f)[:, :, np.newaxis] * (
+        (2.0 / chi)[:, :, np.newaxis] * cross_te - np.einsum('ni,nj->nij', kb, tilde_t)
+    )
+    D2mDfDe = (0.5 / norm_e_norm_f)[:, :, np.newaxis] * (
+        (-2.0 / chi)[:, :, np.newaxis] * cross_tf - np.einsum('ni,nj->nij', kb, tilde_t)
+    )
+    
+    # Assemble reduced DDtwist (N, 11, 11)
+    DDtwist = np.zeros((N, 11, 11))
+    
+    DDtwist[:, 0:3, 0:3] = D2mDe2
+    DDtwist[:, 0:3, 3:6] = -D2mDe2 + D2mDeDf
+    DDtwist[:, 3:6, 0:3] = -D2mDe2 + D2mDfDe
+    DDtwist[:, 3:6, 3:6] = D2mDe2 - (D2mDeDf + D2mDfDe) + D2mDf2
+    DDtwist[:, 0:3, 6:9] = -D2mDeDf
+    DDtwist[:, 6:9, 0:3] = -D2mDfDe
+    DDtwist[:, 6:9, 3:6] = D2mDfDe - D2mDf2
+    DDtwist[:, 3:6, 6:9] = D2mDeDf - D2mDf2
+    DDtwist[:, 6:9, 6:9] = D2mDf2
+
+    # Integrated twist
+    integratedTwist = theta_f - theta_e + refTwist - undef_refTwist
+    
+    # Compute dF (N, 11)
+    scaling_factor = (GJ / l_k) * integratedTwist
+    dF = scaling_factor[:, np.newaxis] * gradTwist
+    
+    # Compute dJ (N, 11, 11)
+    term1 = integratedTwist[:, np.newaxis, np.newaxis] * DDtwist
+    term2 = np.einsum('ni,nj->nij', gradTwist, gradTwist)
+    dJ = (GJ / l_k)[:, np.newaxis, np.newaxis] * (term1 + term2)
+    
+    return dF, dJ

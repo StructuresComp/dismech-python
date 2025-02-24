@@ -1,3 +1,4 @@
+import dismech
 import pathlib
 import pytest
 import numpy as np
@@ -6,8 +7,9 @@ import sys
 import os
 
 # Add the 'src' directory to the system path
-sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '../src')))
-import dismech
+sys.path.append(os.path.abspath(
+    os.path.join(os.path.dirname(__file__), '../src')))
+
 
 def rel_path(fname: str) -> pathlib.Path:
     """
@@ -59,9 +61,11 @@ def rod_cantilever_n51():
 def softrobot_cantilever_n51(rod_cantilever_geom, rod_cantilever_material, rod_cantilever_n51, static_2d_sim, free_fall_env):
     return dismech.SoftRobot(rod_cantilever_geom, rod_cantilever_material, rod_cantilever_n51, static_2d_sim, free_fall_env)
 
+
 @pytest.fixture
 def time_stepper_cantilever_n51(softrobot_cantilever_n51):
     return dismech.TimeStepper(softrobot_cantilever_n51, np.array([0, 1, 2, 3, 4, 5]))
+
 
 @pytest.fixture
 def rod_cantilever_n101():
@@ -93,6 +97,11 @@ def hexparachute_n6():
 @pytest.fixture
 def softrobot_hexparachute_n6(hexparachute_n6_geom, hexparachute_n6_material, hexparachute_n6, dynamic_3d_sim, drag_fall_env):
     return dismech.SoftRobot(hexparachute_n6_geom, hexparachute_n6_material, hexparachute_n6, dynamic_3d_sim, drag_fall_env)
+
+
+@pytest.fixture
+def time_stepper_hexparachute_n6(softrobot_hexparachute_n6):
+    return dismech.TimeStepper(softrobot_hexparachute_n6, np.array([]))
 
 # pneunet
 

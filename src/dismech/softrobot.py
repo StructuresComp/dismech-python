@@ -709,6 +709,11 @@ class SoftRobot:
     def tangent(self) -> np.ndarray:
         """Current edge tangents (n_edges_dof, 3)"""
         return self.__tangent.view()
+    
+    @property
+    def undef_ref_twist(self) -> np.ndarray:
+        """Initial reference twist values (n_bend_twist_springs,)"""
+        return self.__undef_ref_twist.view()
 
     @property
     def ref_twist(self) -> np.ndarray:

@@ -134,19 +134,85 @@ def get_fb_jb_vectorized(robot, q, m1, m2):
     dF_all, dJ_all = eb.gradEb_hessEb_panetta_vectorized(n0_pos, n1_pos, n2_pos, m1e,
                                                          m2e, m1f, m2f, kappa_bar, l_k, EI1, EI2)
 
-    # Apply sign corrections using vector operations
-    sign_mask = signs != 1
-    edge_dofs = robot.map_edge_to_dof(edge_indices[sign_mask.any(axis=1)])
-    dF_all[edge_dofs] *= -1
-    dJ_all[edge_dofs] *= -1
-    dJ_all[:, edge_dofs] *= -1
+    # Identify edges where signs are not 1
+    # Boolean mask for e0 edges that need flipping
+    e0_flipped = signs[:, 0] != 1
+    # Boolean mask for e1 edges that need flipping
+    e1_flipped = signs[:, 1] != 1
+
+    # Apply sign correction using broadcasting (no need to map DOFs again)
+    dF_all[e0_flipped, 9] *= -1  # Corresponds to theta_e index
+    dJ_all[e0_flipped, 9, :] *= -1
+    dJ_all[e0_flipped, :, 9] *= -1
+
+    dF_all[e1_flipped, 10] *= -1  # Corresponds to theta_f index
+    dJ_all[e1_flipped, 10, :] *= -1
+    dJ_all[e1_flipped, :, 10] *= -1
 
     # Batch accumulate results
     Fb = np.zeros(robot.n_dof)
     Jb = np.zeros((robot.n_dof, robot.n_dof))
 
+    # Vectorized summation
     np.add.at(Fb, all_indices, -dF_all)
-    for idx, j in zip(all_indices, dJ_all):
-        Jb[np.ix_(idx, idx)] -= j
+    np.add.at(Jb, (all_indices[:, :, None], all_indices[:, None, :]), -dJ_all)
 
     return Fb, Jb
+
+
+def get_ft_jt_vectorized(robot, q, ref_twist):
+    """Vectorized version of bend-twist spring force/Jacobian calculation"""
+    springs = robot.bend_twist_springs
+
+    # Batch collect all spring data
+    node_indices = np.array([(s.nodes_ind[0], s.nodes_ind[1], s.nodes_ind[2])
+                             for s in springs])
+    edge_indices = np.array(
+        [(s.edges_ind[0], s.edges_ind[1]) for s in springs])
+    signs = np.array([s.sgn for s in springs])
+    all_indices = np.array([s.ind for s in springs])
+
+    # Vectorized position and material director retrieval
+    n0_pos = q[robot.map_node_to_dof(node_indices[:, 0])]
+    n1_pos = q[robot.map_node_to_dof(node_indices[:, 1])]
+    n2_pos = q[robot.map_node_to_dof(node_indices[:, 2])]
+
+    # Vectorized material directors with sign adjustments
+    e0_mask = edge_indices[:, 0]
+    e1_mask = edge_indices[:, 1]
+
+    theta_e = q[robot.map_edge_to_dof(e0_mask)] * signs[:, 0]
+    theta_f = q[robot.map_edge_to_dof(e1_mask)] * signs[:, 1]
+
+    # Vectorized l_k and EA
+    l_k = np.array([s.voronoi_len for s in springs])
+    GJ = np.array([s.stiff_GJ for s in springs])
+
+    # Batch gradient/hessian calculation
+    dF_all, dJ_all = eb.gradEt_hessEt_panetta_vectorized(robot.n_dof, all_indices, n0_pos, n1_pos, n2_pos,
+                                                         theta_e, theta_f, ref_twist, l_k, GJ, robot.undef_ref_twist)
+
+    # Identify edges where signs are not 1
+    # Boolean mask for e0 edges that need flipping
+    e0_flipped = signs[:, 0] != 1
+    # Boolean mask for e1 edges that need flipping
+    e1_flipped = signs[:, 1] != 1
+
+    # Apply sign correction using broadcasting (no need to map DOFs again)
+    dF_all[e0_flipped, 9] *= -1  # Corresponds to theta_e index
+    dJ_all[e0_flipped, 9, :] *= -1
+    dJ_all[e0_flipped, :, 9] *= -1
+
+    dF_all[e1_flipped, 10] *= -1  # Corresponds to theta_f index
+    dJ_all[e1_flipped, 10, :] *= -1
+    dJ_all[e1_flipped, :, 10] *= -1
+
+    # Batch accumulate results
+    Ft = np.zeros(robot.n_dof)
+    Jt = np.zeros((robot.n_dof, robot.n_dof))
+
+    # Vectorized summation
+    np.add.at(Ft, all_indices, -dF_all)
+    np.add.at(Jt, (all_indices[:, :, None], all_indices[:, None, :]), -dJ_all)
+
+    return Ft, Jt

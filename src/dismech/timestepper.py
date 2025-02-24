@@ -75,7 +75,7 @@ class TimeStepper:
         self.robot = self._finalize_update(robot, q)
         return self.robot
 
-    def _compute_forces_and_jacobian(self, robot, q):
+    def _compute_forces_and_jacobian(self, robot: SoftRobot, q):
         forces = np.zeros(robot.n_dof)
         jacobian = np.zeros((robot.n_dof, robot.n_dof))
 
@@ -83,6 +83,8 @@ class TimeStepper:
         a1_iter, a2_iter = robot.compute_time_parallel(robot.a1, robot.q, q)
         theta = robot.get_theta(q)
         m1, m2 = robot.compute_material_directors(a1_iter, a2_iter, theta)
+        ref_twist = robot.compute_reference_twist(
+            robot.bend_twist_springs, a1_iter, robot.compute_tangent(q), robot.ref_twist)
 
         # Add stretch spring contributions
         if robot.stretch_springs:
@@ -95,6 +97,10 @@ class TimeStepper:
             Fb, Jb = fs.get_fb_jb_vectorized(robot, q, m1, m2)
             forces += Fb
             jacobian += Jb
+            if not robot.sim_params.two_d_sim:
+                Ft, Jt = fs.get_ft_jt_vectorized(robot, q, ref_twist)
+                forces += Ft
+                jacobian += Jb
 
         # Add gravity forces
         if "gravity" in robot.env.ext_force_list:

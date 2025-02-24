@@ -581,13 +581,13 @@ class SoftRobot:
     def update(self, q: np.ndarray, u: np.ndarray, a1: np.ndarray, a2: np.ndarray,
                m1: np.ndarray, m2: np.ndarray, ref_twist: np.ndarray) -> "SoftRobot":
         ret = copy.copy(self)
-        ret.__q = q.view()
-        ret.__u = u.view()
-        ret.__a1 = a1.view()
-        ret.__a2 = a2.view()
-        ret.__m1 = m1.view()
-        ret.__m2 = m2.view()
-        ret.__ref_twist = ref_twist.view()
+        ret.__q = q.copy()
+        ret.__u = u.copy()
+        ret.__a1 = a1.copy()
+        ret.__a2 = a2.copy()
+        ret.__m1 = m1.copy()
+        ret.__m2 = m2.copy()
+        ret.__ref_twist = ref_twist.copy()
         return ret
 
     @staticmethod
@@ -618,7 +618,12 @@ class SoftRobot:
     def q(self) -> np.ndarray:
         """Current state vector (n_dof,)"""
         return self.__q.view()
-
+    
+    @property
+    def u(self) -> np.ndarray:
+        """Current velocity vector (n_dof,)"""
+        return self.__u.view()
+    
     @property
     def q0(self) -> np.ndarray:
         """Initial state vector (n_dof,)"""

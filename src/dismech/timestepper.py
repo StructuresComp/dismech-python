@@ -1,3 +1,5 @@
+import copy
+
 import numpy as np
 from scipy.linalg import solve, LinAlgError
 
@@ -15,7 +17,9 @@ class TimeStepper:
         params = robot.sim_params
 
         # Initialize iteration variables
-        q = robot.q0.copy()
+        q0 = copy.deepcopy(robot.q)
+        q = copy.deepcopy(robot.q)
+        
         alpha = 1.0
         iteration = 1
         err_history = []
@@ -45,25 +49,31 @@ class TimeStepper:
             dq[free_idx] = alpha * dq_free
 
             # Check all convergence criteria
-            disp_converged = np.max(np.abs(dq[1:robot.end_node_dof_index])) / robot.sim_params.dt < robot.sim_params.dtol
+            disp_converged = np.max(np.abs(
+                dq[1:robot.end_node_dof_index])) / robot.sim_params.dt < robot.sim_params.dtol
             force_converged = err < params.tol
             relative_converged = err < err_history[0] * params.ftol
             iteration_limit = iteration >= params.max_iter
 
             if any([force_converged, relative_converged, disp_converged, iteration_limit]):
+                if iteration_limit:
+                    raise ValueError
                 break
 
             iteration += 1
 
+        
+
         # Final update and return
-        return self._finalize_update(robot, q)
+        self.robot = self._finalize_update(robot, q)
+        return self.robot
 
     def _compute_forces_and_jacobian(self, robot, q):
         forces = np.zeros(robot.n_dof)
         jacobian = np.zeros((robot.n_dof, robot.n_dof))
 
         # Compute reference frames and material directors
-        a1_iter, a2_iter = robot.compute_time_parallel(robot.a1, robot.q0, q)
+        a1_iter, a2_iter = robot.compute_time_parallel(robot.a1, robot.q, q)
         theta = robot.get_theta(q)
         m1, m2 = robot.compute_material_directors(a1_iter, a2_iter, theta)
 
@@ -111,8 +121,8 @@ class TimeStepper:
         return fg
 
     def _finalize_update(self, robot: SoftRobot, q):
-        u = (q - robot.q0) / robot.sim_params.dt
-        a1, a2 = robot.compute_time_parallel(robot.a1, robot.q0, q)
+        u = (q - robot.q) / robot.sim_params.dt
+        a1, a2 = robot.compute_time_parallel(robot.a1, robot.q, q)
 
         return robot.update(
             q, u, a1, a2,

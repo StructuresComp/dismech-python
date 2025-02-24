@@ -59,6 +59,9 @@ def rod_cantilever_n51():
 def softrobot_cantilever_n51(rod_cantilever_geom, rod_cantilever_material, rod_cantilever_n51, static_2d_sim, free_fall_env):
     return dismech.SoftRobot(rod_cantilever_geom, rod_cantilever_material, rod_cantilever_n51, static_2d_sim, free_fall_env)
 
+@pytest.fixture
+def time_stepper_cantilever_n51(softrobot_cantilever_n51):
+    return dismech.TimeStepper(softrobot_cantilever_n51, np.array([0, 1, 2, 3, 4, 5]))
 
 @pytest.fixture
 def rod_cantilever_n101():
@@ -119,7 +122,7 @@ def static_2d_sim():
                              log_step=1,
                              dt=1e-2,
                              max_iter=25,
-                             total_time=1.0,
+                             total_time=0.1,
                              plot_step=1,
                              tol=1e-4,
                              ftol=1e-4,

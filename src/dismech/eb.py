@@ -278,16 +278,6 @@ def cross_mat_batch(v):
     ]).transpose(2, 0, 1)
 
 
-def cross_mat_batch(v):
-    """Batch cross product matrix"""
-    z = np.zeros_like(v[:, 0])
-    return np.array([
-        [z, -v[:, 2], v[:, 1]],
-        [v[:, 2], z, -v[:, 0]],
-        [-v[:, 1], v[:, 0], z]
-    ]).transpose(2, 0, 1)
-
-
 def gradEb_hessEb_panetta_vectorized(node0, node1, node2,
                                      m1e, m2e, m1f, m2f,
                                      kappa_bar, l_k, EI1, EI2):

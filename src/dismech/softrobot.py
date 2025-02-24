@@ -88,6 +88,7 @@ class SoftRobot:
                 (self.__q0, np.zeros(self.__n_edges_shell_only)))
 
         self.__q = self.__q0.copy()
+        self.__u = np.zeros(self.__q0.size)  # velocity vector
 
         # Precompute reference metrics
         self.__ref_len = self._get_ref_len()
@@ -618,12 +619,12 @@ class SoftRobot:
     def q(self) -> np.ndarray:
         """Current state vector (n_dof,)"""
         return self.__q.view()
-    
+
     @property
     def u(self) -> np.ndarray:
         """Current velocity vector (n_dof,)"""
         return self.__u.view()
-    
+
     @property
     def q0(self) -> np.ndarray:
         """Initial state vector (n_dof,)"""

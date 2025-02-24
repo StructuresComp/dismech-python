@@ -15,11 +15,12 @@ class TimeStepper:
     def step(self, robot: SoftRobot = None) -> SoftRobot:
         robot = robot or self.robot
         params = robot.sim_params
+        free_idx = robot.free_dof
 
         # Initialize iteration variables
         q0 = copy.deepcopy(robot.q)
         q = copy.deepcopy(robot.q)
-        
+
         alpha = 1.0
         iteration = 1
         err_history = []
@@ -28,8 +29,16 @@ class TimeStepper:
             # Compute forces and Jacobians
             forces, jacobian = self._compute_forces_and_jacobian(robot, q)
 
+            # Inertial force vs equilibrium
+            if params.static_sim:
+                forces = -forces
+                jacobian = -jacobian
+            else:
+                forces = (robot.mass_matrix / params.dt) @ \
+                    ((q - q0) / params.dt - robot.u) - forces
+                jacobian = robot.mass_matrix / params.dt ** 2 - jacobian
+
             # Handle free DOF components
-            free_idx = robot.free_dof
             f_free = -forces[free_idx]
             j_free = -jacobian[np.ix_(free_idx, free_idx)]
 
@@ -61,8 +70,6 @@ class TimeStepper:
                 break
 
             iteration += 1
-
-        
 
         # Final update and return
         self.robot = self._finalize_update(robot, q)

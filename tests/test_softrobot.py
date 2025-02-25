@@ -57,7 +57,6 @@ def test_tangent_hexparachute_n6(softrobot_hexparachute_n6):
         rel_path('resources/parachute/hexparachute_multirod.mat'))
     tangent_helper(robot, robot.q, valid_data['q0_tangent'])
 
-
 def test_compute_space_parallel_cantilever_n51(softrobot_cantilever_n51):
     robot = softrobot_cantilever_n51
     new_robot = robot.compute_space_parallel()

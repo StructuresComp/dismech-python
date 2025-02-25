@@ -93,12 +93,11 @@ def get_fs_js_vectorized(robot, q):
 
     # Vectorized accumulation using numpy's ufunc.at
     np.add.at(Fs, all_indices, -dF_all)
-    for idx, j in zip(all_indices, dJ_all):
-        Js[np.ix_(idx, idx)] -= j
+    np.add.at(Js, (all_indices[:, :, None], all_indices[:, None, :]), -dJ_all)
 
     return Fs, Js
 
-
+# FIXME: Probably sign issue??
 def get_fb_jb_vectorized(robot, q, m1, m2):
     """Vectorized version of bend-twist spring force/Jacobian calculation"""
     springs = robot.bend_twist_springs
@@ -119,9 +118,9 @@ def get_fb_jb_vectorized(robot, q, m1, m2):
     # Vectorized material directors with sign adjustments
     e0_mask = edge_indices[:, 0]
     e1_mask = edge_indices[:, 1]
-    m1e = m1[e0_mask] * signs[:, 0, None]
+    m1e = m1[e0_mask]
     m2e = m2[e0_mask] * signs[:, 0, None]
-    m1f = m1[e1_mask] * signs[:, 1, None]
+    m1f = m1[e1_mask]
     m2f = m2[e1_mask] * signs[:, 1, None]
 
     # Vectorized l_k and EA
@@ -189,7 +188,7 @@ def get_ft_jt_vectorized(robot, q, ref_twist):
     GJ = np.array([s.stiff_GJ for s in springs])
 
     # Batch gradient/hessian calculation
-    dF_all, dJ_all = eb.gradEt_hessEt_panetta_vectorized(robot.n_dof, all_indices, n0_pos, n1_pos, n2_pos,
+    dF_all, dJ_all = eb.gradEt_hessEt_panetta_vectorized(n0_pos, n1_pos, n2_pos,
                                                          theta_e, theta_f, ref_twist, l_k, GJ, robot.undef_ref_twist)
 
     # Identify edges where signs are not 1
@@ -216,3 +215,37 @@ def get_ft_jt_vectorized(robot, q, ref_twist):
     np.add.at(Jt, (all_indices[:, :, None], all_indices[:, None, :]), -dJ_all)
 
     return Ft, Jt
+
+
+def get_fb_jb_shell_vectorized(robot, q):
+    """Vectorized version of hinge spring force/Jacobian calculation"""
+    springs = robot.hinge_springs
+
+    # Batch collect all spring data
+    node_indices = np.array([(s.nodes_ind[0], s.nodes_ind[1], s.nodes_ind[2], s.nodes_ind[3])
+                             for s in springs])
+    all_indices = np.array([s.ind for s in springs])
+
+    # Vectorized position and material director retrieval
+    n0_pos = q[robot.map_node_to_dof(node_indices[:, 0])]
+    n1_pos = q[robot.map_node_to_dof(node_indices[:, 1])]
+    n2_pos = q[robot.map_node_to_dof(node_indices[:, 2])]
+    n3_pos = q[robot.map_node_to_dof(node_indices[:, 3])]
+
+    # Vectorized l_k and EA
+    kb = np.array([s.kb for s in springs])
+    theta_bar = np.array([s.theta_bar for s in springs])
+
+    # Batch gradient/hessian calculation
+    dF_all, dJ_all = eb.gradEb_hessEb_shell_vectorized(
+        n0_pos, n1_pos, n2_pos, n3_pos, kb, theta_bar)
+
+    # Batch accumulate results
+    Fb = np.zeros(robot.n_dof)
+    Jb = np.zeros((robot.n_dof, robot.n_dof))
+
+    # Vectorized summation
+    np.add.at(Fb, all_indices, -dF_all)
+    np.add.at(Jb, (all_indices[:, :, None], all_indices[:, None, :]), -dJ_all)
+
+    return Fb, Jb

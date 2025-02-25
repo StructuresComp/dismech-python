@@ -160,16 +160,18 @@ class SoftRobot:
             v2 = self.__nodes[faces[:, 2]] - self.__nodes[faces[:, 1]]
             areas = 0.5 * np.linalg.norm(np.cross(v1, v2), axis=1)
             m_shell = self.__rho * areas * self.__h
-            np.add.at(mass, (3 * faces).ravel(), np.repeat(m_shell / 3, 3))
+            dof_indices = (3 * faces[:, :, None] + np.arange(3)).reshape(-1)
+            np.add.at(mass, dof_indices, np.repeat(m_shell / 3, 9))
 
-        # Rod node contributions
-        if geom.axs is not None:
-            dm_nodes = self.__voronoi_ref_len * geom.axs * self.__rho
-        else:
-            dm_nodes = self.__voronoi_ref_len * \
-                np.pi * (self.__r0 ** 2) * self.__rho
-        node_dofs = np.arange(3 * self.__n_nodes).reshape(-1, 3)
-        mass[node_dofs] += dm_nodes[:, None]
+        if self.__n_nodes:
+            # Rod node contributions
+            if geom.axs is not None:
+                dm_nodes = self.__voronoi_ref_len * geom.axs * self.__rho
+            else:
+                dm_nodes = self.__voronoi_ref_len * \
+                    np.pi * (self.__r0 ** 2) * self.__rho
+            node_dofs = np.arange(3 * self.__n_nodes).reshape(-1, 3)
+            mass[node_dofs] += dm_nodes[:, None]
 
         # Edge contributions
         if self.__n_edges_dof:
@@ -249,6 +251,10 @@ class SoftRobot:
     @staticmethod
     def _construct_edge_combinations(edges: np.ndarray) -> np.ndarray:
         n = edges.shape[0]
+        # FIXME: not sure what default should be
+        if n == 0:
+            return np.array([])
+        
         i, j = np.triu_indices(n, 1)
         mask = ~np.any((edges[i, None] == edges[j][:, None, :]) | (
             edges[i, None] == edges[j][:, None, ::-1]), axis=(1, 2))
@@ -307,6 +313,9 @@ class SoftRobot:
     def _set_kappa(self, m1: np.ndarray, m2: np.ndarray) -> None:
         springs = self.__bend_twist_springs
 
+        if len(springs) == 0:
+            return
+
         # Precompute all spring data
         nodes_ind = np.array([s.nodes_ind for s in springs])
         edges_ind = np.array([s.edges_ind for s in springs])
@@ -344,6 +353,9 @@ class SoftRobot:
     def compute_reference_twist(self, springs: typing.List[bend_twist_spring.BendTwistSpring],
                                 a1: np.ndarray, tangent: np.ndarray,
                                 ref_twist: np.ndarray) -> np.ndarray:
+        if len(springs) == 0:
+            return np.array([])
+        
         edges = np.array([s.edges_ind for s in springs])
         sgn = np.array([s.sgn for s in springs])
 
@@ -460,6 +472,9 @@ class SoftRobot:
         ret = copy.deepcopy(self)
         ret.__tangent = ret.compute_tangent(ret.__q0)
 
+        if not ret.__tangent.size:
+            return ret
+        
         # Initialize first a1
         t0 = ret.__tangent[0]
         rand_vec = np.array([0, 1, 0])

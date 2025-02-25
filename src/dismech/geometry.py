@@ -241,7 +241,7 @@ class Geometry:
 
         # Constants
         valid_headers = {'*nodes': 0,
-                         '*rodedges': 1, '*facenodes': 2}
+                         '*rodedges': 1, '*triangles': 2}
         h_len = [3, 2, 3]  # expected entry length
         h_dtype = [GEOMETRY_FLOAT,
                    GEOMETRY_INT, GEOMETRY_INT]

@@ -27,7 +27,7 @@ class TimeStepper:
 
         while True:
             # Compute forces and Jacobians
-            forces, jacobian = self._compute_forces_and_jacobian(robot, q)
+            forces, jacobian = self._compute_forces_and_jacobian(robot, q, q0)
 
             # Inertial force vs equilibrium
             if params.static_sim:
@@ -77,7 +77,7 @@ class TimeStepper:
         self.robot = self._finalize_update(robot, q)
         return self.robot
 
-    def _compute_forces_and_jacobian(self, robot: SoftRobot, q):
+    def _compute_forces_and_jacobian(self, robot: SoftRobot, q, q0):
         forces = np.zeros(robot.n_dof)
         jacobian = np.zeros((robot.n_dof, robot.n_dof))
 
@@ -113,7 +113,7 @@ class TimeStepper:
         if "gravity" in robot.env.ext_force_list:
             forces += self._compute_gravity_forces(robot)
         if "aerodynamics" in robot.env.ext_force_list:
-            F, J = self._compute_aerodynamic_forces(robot, q)
+            F, J = self._compute_aerodynamic_forces(robot, q, q0)
             forces += F
             jacobian += J
 
@@ -143,12 +143,12 @@ class TimeStepper:
         mass_diag = np.diag(robot.mass_matrix)
         fg[robot.node_dof_indices] = mass_diag[robot.node_dof_indices] * robot.env.g
         return fg
-    
-    def _compute_aerodynamic_forces(self, robot: SoftRobot, q):
+
+    def _compute_aerodynamic_forces(self, robot: SoftRobot, q, q0):
         cd = robot.env.cd
         rho_med = robot.env.rho
         dt = robot.sim_params.dt
-        u = (q - robot.q) / dt
+        u = (q - q0) / dt
         Fd = np.zeros(robot.n_dof)
         Jd = np.zeros((robot.n_dof, robot.n_dof))
         face_as = robot.face_area
@@ -165,7 +165,8 @@ class TimeStepper:
             norm_normal = np.linalg.norm(normal)
             if norm_normal == 0:
                 return np.zeros((3, 3))
-            term = (np.dot(normal, normal) * np.eye(3) - np.outer(normal, normal)) / (norm_normal ** 3)
+            term = (np.dot(normal, normal) * np.eye(3) -
+                    np.outer(normal, normal)) / (norm_normal ** 3)
             if i == 1:
                 v_edge = q3 - q2
             elif i == 2:
@@ -215,11 +216,14 @@ class TimeStepper:
 
             # Forces
             if sign1 != 0:
-                Fd[dof1] += sign1 * (0.5 * rho_med * cd * face_A / 3) * (dot_u1 ** 2) * face_unit_normal
+                Fd[dof1] += sign1 * (0.5 * rho_med * cd *
+                                     face_A / 3) * (dot_u1 ** 2) * face_unit_normal
             if sign2 != 0:
-                Fd[dof2] += sign2 * (0.5 * rho_med * cd * face_A / 3) * (dot_u2 ** 2) * face_unit_normal
+                Fd[dof2] += sign2 * (0.5 * rho_med * cd *
+                                     face_A / 3) * (dot_u2 ** 2) * face_unit_normal
             if sign3 != 0:
-                Fd[dof3] += sign3 * (0.5 * rho_med * cd * face_A / 3) * (dot_u3 ** 2) * face_unit_normal
+                Fd[dof3] += sign3 * (0.5 * rho_med * cd *
+                                     face_A / 3) * (dot_u3 ** 2) * face_unit_normal
 
             # Jacobian
             # Node 1 contributions
@@ -229,58 +233,72 @@ class TimeStepper:
                 term_part = (1/dt) * face_unit_normal + u1 @ grad1
                 term1 = 2 * dot_u1 * np.outer(face_unit_normal, term_part)
                 term2 = (dot_u1 ** 2) * grad1
-                Jd[np.ix_(dof1, dof1)] += sign1 * (rho_med * cd * face_A / 3) * (term1 + term2)
+                Jd[np.ix_(dof1, dof1)] += sign1 * \
+                    (rho_med * cd * face_A / 3) * (term1 + term2)
 
                 # Jd[dof1, dof2]
                 grad2 = gradient_of_unit_normal(face_normal, q1, q2, q3, 2)
-                term_j = (2 * np.outer(face_unit_normal, u1) + dot_u1 * np.eye(3)) @ grad2
-                Jd[np.ix_(dof1, dof2)] += sign1 * (rho_med * cd * face_A / 3) * dot_u1 * term_j
+                term_j = (2 * np.outer(face_unit_normal, u1) +
+                          dot_u1 * np.eye(3)) @ grad2
+                Jd[np.ix_(dof1, dof2)] += sign1 * \
+                    (rho_med * cd * face_A / 3) * dot_u1 * term_j
 
                 # Jd[dof1, dof3]
                 grad3 = gradient_of_unit_normal(face_normal, q1, q2, q3, 3)
-                term_j = (2 * np.outer(face_unit_normal, u1) + dot_u1 * np.eye(3)) @ grad3
-                Jd[np.ix_(dof1, dof3)] += sign1 * (rho_med * cd * face_A / 3) * dot_u1 * term_j
+                term_j = (2 * np.outer(face_unit_normal, u1) +
+                          dot_u1 * np.eye(3)) @ grad3
+                Jd[np.ix_(dof1, dof3)] += sign1 * \
+                    (rho_med * cd * face_A / 3) * dot_u1 * term_j
 
             # Node 2 contributions
             if sign2 != 0 and dot_u2 != 0:
                 # Jd[dof2, dof1]
                 grad1 = gradient_of_unit_normal(face_normal, q1, q2, q3, 1)
-                term_j = (2 * np.outer(face_unit_normal, u2) + dot_u2 * np.eye(3)) @ grad1
-                Jd[np.ix_(dof2, dof1)] += sign2 * (rho_med * cd * face_A / 3) * dot_u2 * term_j
+                term_j = (2 * np.outer(face_unit_normal, u2) +
+                          dot_u2 * np.eye(3)) @ grad1
+                Jd[np.ix_(dof2, dof1)] += sign2 * \
+                    (rho_med * cd * face_A / 3) * dot_u2 * term_j
 
                 # Jd[dof2, dof2]
                 grad2 = gradient_of_unit_normal(face_normal, q1, q2, q3, 2)
                 term_part = (1/dt) * face_unit_normal + u2 @ grad2
                 term1 = 2 * dot_u2 * np.outer(face_unit_normal, term_part)
                 term2 = (dot_u2 ** 2) * grad2
-                Jd[np.ix_(dof2, dof2)] += sign2 * (rho_med * cd * face_A / 3) * (term1 + term2)
+                Jd[np.ix_(dof2, dof2)] += sign2 * \
+                    (rho_med * cd * face_A / 3) * (term1 + term2)
 
                 # Jd[dof2, dof3]
                 grad3 = gradient_of_unit_normal(face_normal, q1, q2, q3, 3)
-                term_j = (2 * np.outer(face_unit_normal, u2) + dot_u2 * np.eye(3)) @ grad3
-                Jd[np.ix_(dof2, dof3)] += sign2 * (rho_med * cd * face_A / 3) * dot_u2 * term_j
+                term_j = (2 * np.outer(face_unit_normal, u2) +
+                          dot_u2 * np.eye(3)) @ grad3
+                Jd[np.ix_(dof2, dof3)] += sign2 * \
+                    (rho_med * cd * face_A / 3) * dot_u2 * term_j
 
             # Node 3 contributions
             if sign3 != 0 and dot_u3 != 0:
                 # Jd[dof3, dof1]
                 grad1 = gradient_of_unit_normal(face_normal, q1, q2, q3, 1)
-                term_j = (2 * np.outer(face_unit_normal, u3) + dot_u3 * np.eye(3)) @ grad1
-                Jd[np.ix_(dof3, dof1)] += sign3 * (rho_med * cd * face_A / 3) * dot_u3 * term_j
+                term_j = (2 * np.outer(face_unit_normal, u3) +
+                          dot_u3 * np.eye(3)) @ grad1
+                Jd[np.ix_(dof3, dof1)] += sign3 * \
+                    (rho_med * cd * face_A / 3) * dot_u3 * term_j
 
                 # Jd[dof3, dof2]
                 grad2 = gradient_of_unit_normal(face_normal, q1, q2, q3, 2)
-                term_j = (2 * np.outer(face_unit_normal, u3) + dot_u3 * np.eye(3)) @ grad2
-                Jd[np.ix_(dof3, dof2)] += sign3 * (rho_med * cd * face_A / 3) * dot_u3 * term_j
+                term_j = (2 * np.outer(face_unit_normal, u3) +
+                          dot_u3 * np.eye(3)) @ grad2
+                Jd[np.ix_(dof3, dof2)] += sign3 * \
+                    (rho_med * cd * face_A / 3) * dot_u3 * term_j
 
                 # Jd[dof3, dof3]
                 grad3 = gradient_of_unit_normal(face_normal, q1, q2, q3, 3)
                 term_part = (1/dt) * face_unit_normal + u3 @ grad3
                 term1 = 2 * dot_u3 * np.outer(face_unit_normal, term_part)
                 term2 = (dot_u3 ** 2) * grad3
-                Jd[np.ix_(dof3, dof3)] += sign3 * (rho_med * cd * face_A / 3) * (term1 + term2)
+                Jd[np.ix_(dof3, dof3)] += sign3 * \
+                    (rho_med * cd * face_A / 3) * (term1 + term2)
 
         return Fd, Jd
-
 
     def _finalize_update(self, robot: SoftRobot, q):
         u = (q - robot.q) / robot.sim_params.dt

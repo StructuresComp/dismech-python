@@ -97,7 +97,6 @@ def get_fs_js_vectorized(robot, q):
 
     return Fs, Js
 
-# FIXME: Probably sign issue??
 def get_fb_jb_vectorized(robot, q, m1, m2):
     """Vectorized version of bend-twist spring force/Jacobian calculation"""
     springs = robot.bend_twist_springs

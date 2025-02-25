@@ -40,8 +40,8 @@ def material_director_helper(robot, truth):
     assert(np.allclose(m1, truth['m1']))
     assert(np.allclose(m2, truth['m2']))
 
-def test_tangent_cantilever_n51(softrobot_cantilever_n51):
-    robot = softrobot_cantilever_n51
+def test_tangent_cantilever_n51(softrobot_rod_cantilever_n51):
+    robot = softrobot_rod_cantilever_n51
     valid_data = scipy.io.loadmat(
         rel_path('resources/rod_cantilever/rod_cantilever_n51_multirod.mat'))
 
@@ -57,23 +57,23 @@ def test_tangent_hexparachute_n6(softrobot_hexparachute_n6):
         rel_path('resources/parachute/hexparachute_multirod.mat'))
     tangent_helper(robot, robot.q, valid_data['q0_tangent'])
 
-def test_compute_space_parallel_cantilever_n51(softrobot_cantilever_n51):
-    robot = softrobot_cantilever_n51
+def test_compute_space_parallel_cantilever_n51(softrobot_rod_cantilever_n51):
+    robot = softrobot_rod_cantilever_n51
     new_robot = robot.compute_space_parallel()
     valid_data = scipy.io.loadmat(rel_path(
         'resources/rod_cantilever/rod_cantilever_n51_compute_space_parallel.mat'))
     robot_helper(new_robot, valid_data['robot'])
 
 
-def test_compute_time_parallel_cantilever_n51(softrobot_cantilever_n51):
-    robot = softrobot_cantilever_n51
+def test_compute_time_parallel_cantilever_n51(softrobot_rod_cantilever_n51):
+    robot = softrobot_rod_cantilever_n51
     valid_data = scipy.io.loadmat(rel_path(
         'resources/rod_cantilever/rod_cantilever_n51_compute_time_parallel.mat'))
     time_parallel_helper(robot, valid_data)
 
 
-def test_compute_reference_twist_cantilever_n51(softrobot_cantilever_n51):
-    robot = softrobot_cantilever_n51
+def test_compute_reference_twist_cantilever_n51(softrobot_rod_cantilever_n51):
+    robot = softrobot_rod_cantilever_n51
     valid_data = scipy.io.loadmat(rel_path(
         'resources/rod_cantilever/rod_cantilever_n51_compute_reference_twist.mat'))
     reference_twist_helper(robot, valid_data)

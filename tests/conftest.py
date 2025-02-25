@@ -58,18 +58,52 @@ def rod_cantilever_n51():
 
 
 @pytest.fixture
-def softrobot_cantilever_n51(rod_cantilever_geom, rod_cantilever_material, rod_cantilever_n51, static_2d_sim, free_fall_env):
+def softrobot_rod_cantilever_n51(rod_cantilever_geom, rod_cantilever_material, rod_cantilever_n51, static_2d_sim, free_fall_env):
     return dismech.SoftRobot(rod_cantilever_geom, rod_cantilever_material, rod_cantilever_n51, static_2d_sim, free_fall_env)
 
 
 @pytest.fixture
-def time_stepper_cantilever_n51(softrobot_cantilever_n51):
-    return dismech.TimeStepper(softrobot_cantilever_n51, np.array([0, 1, 2, 3, 4, 5]))
+def time_stepper_rod_cantilever_n51(softrobot_rod_cantilever_n51):
+    return dismech.TimeStepper(softrobot_rod_cantilever_n51, np.array([0, 1, 2, 3, 4, 5]))
 
 
 @pytest.fixture
 def rod_cantilever_n101():
     return dismech.Geometry.from_txt(rel_path('resources/rod_cantilever/horizontal_rod_n101.txt'))
+
+# shell cantilever
+
+
+@pytest.fixture
+def shell_cantilever_geom():
+    return dismech.GeomParams(rod_r0=0,
+                              shell_h=1e-3)
+
+
+@pytest.fixture
+def shell_cantilever_material():
+    return dismech.Material(density=1200,
+                            youngs_rod=0,
+                            youngs_shell=2e8,
+                            poisson_rod=0,
+                            poisson_shell=0.5)
+
+
+@pytest.fixture
+def shell_cantilever_n40():
+    return dismech.Geometry.from_txt(rel_path('resources/shell_cantilever/equilateral_mesh_40.txt'))
+
+
+@pytest.fixture
+def softrobot_shell_cantilever_n40(shell_cantilever_geom, shell_cantilever_material, shell_cantilever_n40, dynamic_3d_sim, free_fall_env):
+    return dismech.SoftRobot(shell_cantilever_geom, shell_cantilever_material, shell_cantilever_n40, dynamic_3d_sim, free_fall_env)
+
+
+@pytest.fixture
+def time_stepper_shell_cantilever_n40(softrobot_shell_cantilever_n40):
+    fixed_points = np.array(
+        np.where(softrobot_shell_cantilever_n40.q.reshape(-1, 3)[:, 0] <= 0.01)[0])
+    return dismech.TimeStepper(softrobot_shell_cantilever_n40, fixed_points)
 
 # parachute
 

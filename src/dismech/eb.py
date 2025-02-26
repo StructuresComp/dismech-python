@@ -282,15 +282,6 @@ def cross_mat_batch(v):
 def gradEb_hessEb_panetta_vectorized(node0, node1, node2,
                                      m1e, m2e, m1f, m2f,
                                      kappa_bar, l_k, EI1, EI2):
-    # Input reshaping (batch_size, 3)
-    node0 = np.asarray(node0).reshape(-1, 3)
-    node1 = np.asarray(node1).reshape(-1, 3)
-    node2 = np.asarray(node2).reshape(-1, 3)
-    m1e = np.asarray(m1e).reshape(-1, 3)
-    m2e = np.asarray(m2e).reshape(-1, 3)
-    m1f = np.asarray(m1f).reshape(-1, 3)
-    m2f = np.asarray(m2f).reshape(-1, 3)
-
     n_springs = node0.shape[0]
     Id3 = np.eye(3)[None, :, :]  # For broadcasting
 

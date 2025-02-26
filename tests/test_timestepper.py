@@ -47,6 +47,36 @@ def test_dynamic_sim_shell_cantilever_n40(time_stepper_shell_cantilever_n40):
 
     np.allclose(qs, valid_data['qs'][:40])
 
+def test_dynamic_sim_contortion_n21(time_stepper_contortion_n21):
+    u0 = 0.1
+    w0 = 2
+
+    stepper = time_stepper_contortion_n21
+    robot = stepper.robot   # update robot
+    new_robot = robot
+    valid_data = scipy.io.loadmat(
+        rel_path('resources/contortion/contortion_n21_dynamic_sim.mat'))
+    robot.sim_params.total_time = 1.0
+    
+    qs = []
+    steps = int(robot.sim_params.total_time / robot.sim_params.dt) + 1
+    for i in range(1, steps):
+        new_robot = stepper.step(new_robot)
+        qs.append(new_robot.q)
+
+        # Move fixed node/edges
+        if i * robot.sim_params.dt < 0.15:
+            q = new_robot.q
+            q[robot.map_node_to_dof(stepper.fixed_nodes[:3])[:,0]] += u0 * robot.sim_params.dt
+            new_robot = new_robot.update(q)
+        else:
+            q = new_robot.q
+            q[63:65] += w0 * robot.sim_params.dt
+            new_robot = new_robot.update(q)
+    qs = np.stack(qs)
+
+    np.allclose(qs, valid_data['qs'])
+
 
 def test_aerodynamic_hexparachute_n6(time_stepper_hexparachute_n6):
     stepper = time_stepper_hexparachute_n6

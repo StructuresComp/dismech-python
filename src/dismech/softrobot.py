@@ -254,7 +254,7 @@ class SoftRobot:
         # FIXME: not sure what default should be
         if n == 0:
             return np.array([])
-        
+
         i, j = np.triu_indices(n, 1)
         mask = ~np.any((edges[i, None] == edges[j][:, None, :]) | (
             edges[i, None] == edges[j][:, None, ::-1]), axis=(1, 2))
@@ -355,7 +355,7 @@ class SoftRobot:
                                 ref_twist: np.ndarray) -> np.ndarray:
         if len(springs) == 0:
             return np.array([])
-        
+
         edges = np.array([s.edges_ind for s in springs])
         sgn = np.array([s.sgn for s in springs])
 
@@ -474,7 +474,7 @@ class SoftRobot:
 
         if not ret.__tangent.size:
             return ret
-        
+
         # Initialize first a1
         t0 = ret.__tangent[0]
         rand_vec = np.array([0, 1, 0])
@@ -597,16 +597,27 @@ class SoftRobot:
 
         return ret
 
-    def update(self, q: np.ndarray, u: np.ndarray, a1: np.ndarray, a2: np.ndarray,
-               m1: np.ndarray, m2: np.ndarray, ref_twist: np.ndarray) -> "SoftRobot":
+    def update(self, q: np.ndarray,
+               u: np.ndarray = None,
+               a1: np.ndarray = None,
+               a2: np.ndarray = None,
+               m1: np.ndarray = None,
+               m2: np.ndarray = None,
+               ref_twist: np.ndarray = None) -> "SoftRobot":
         ret = copy.copy(self)
         ret.__q = q.copy()
-        ret.__u = u.copy()
-        ret.__a1 = a1.copy()
-        ret.__a2 = a2.copy()
-        ret.__m1 = m1.copy()
-        ret.__m2 = m2.copy()
-        ret.__ref_twist = ref_twist.copy()
+        if u is not None:
+            ret.__u = u.copy()
+        if a1 is not None:
+            ret.__a1 = a1.copy()
+        if a2 is not None:
+            ret.__a2 = a2.copy()
+        if m1 is not None:
+            ret.__m1 = m1.copy()
+        if m2 is not None:
+            ret.__m2 = m2.copy()
+        if ref_twist is not None:
+            ret.__ref_twist = ref_twist.copy()
         return ret
 
     @staticmethod
@@ -732,7 +743,7 @@ class SoftRobot:
     def end_node_dof_index(self) -> int:
         """First edge DOF index after node DOFs"""
         return 3 * self.__n_nodes
-    
+
     @property
     def edges(self):
         return self.__edges

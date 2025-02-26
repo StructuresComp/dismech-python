@@ -9,6 +9,7 @@ from dismech import SoftRobot, fs
 class TimeStepper:
     def __init__(self, robot: SoftRobot, fixed_nodes):
         self.robot = robot.initialize(fixed_nodes)
+        self.fixed_nodes = fixed_nodes
         self.epsilon = 1e-8  # Regularization parameter
         self.min_force = 1e-8  # Threshold for negligible forces
 
@@ -39,8 +40,8 @@ class TimeStepper:
                 jacobian = robot.mass_matrix / params.dt ** 2 - jacobian
 
             # Handle free DOF components
-            f_free = -forces[free_idx]
-            j_free = -jacobian[np.ix_(free_idx, free_idx)]
+            f_free = forces[free_idx]
+            j_free = jacobian[np.ix_(free_idx, free_idx)]
 
             # Regularized matrix solver
             dq_free = self._safe_solve(j_free, f_free)
@@ -82,7 +83,7 @@ class TimeStepper:
         jacobian = np.zeros((robot.n_dof, robot.n_dof))
 
         # Compute reference frames and material directors
-        a1_iter, a2_iter = robot.compute_time_parallel(robot.a1, robot.q, q)
+        a1_iter, a2_iter = robot.compute_time_parallel(robot.a1, q0, q)
         theta = robot.get_theta(q)
         m1, m2 = robot.compute_material_directors(a1_iter, a2_iter, theta)
         ref_twist = robot.compute_reference_twist(
@@ -120,17 +121,15 @@ class TimeStepper:
         return forces, jacobian
 
     def _safe_solve(self, J, F):
-        """Regularized matrix solver with fallback strategies"""
+        """Matrix solver with fallback strategies"""
         if np.linalg.norm(F) < self.min_force:
             return np.zeros_like(F)
 
         try:
-            # Add regularization to Jacobian
-            J_reg = J + self.epsilon * np.eye(J.shape[0])
-            return solve(J_reg, F, assume_a='pos')
+            return np.linalg.solve(J, F)
         except LinAlgError:
             # Fallback to least squares solution
-            return np.linalg.lstsq(J_reg, F, rcond=None)[0]
+            return np.linalg.lstsq(J, F, rcond=None)[0]
 
     def _adaptive_damping(self, alpha, iteration):
         if iteration < 10:

@@ -43,6 +43,11 @@ def rod_cantilever_material():
 
 
 @pytest.fixture
+def rod_cantilever_n21():
+    return dismech.Geometry.from_txt(rel_path('resources/rod_cantilever/horizontal_rod_n21.txt'))
+
+
+@pytest.fixture
 def rod_cantilever_n26():
     return dismech.Geometry.from_txt(rel_path('resources/rod_cantilever/horizontal_rod_n26.txt'))
 
@@ -70,6 +75,29 @@ def time_stepper_rod_cantilever_n51(softrobot_rod_cantilever_n51):
 @pytest.fixture
 def rod_cantilever_n101():
     return dismech.Geometry.from_txt(rel_path('resources/rod_cantilever/horizontal_rod_n101.txt'))
+
+
+@pytest.fixture
+def contortion_geom():
+    return dismech.GeomParams(rod_r0=0.001,
+                              shell_h=0)
+
+
+@pytest.fixture
+def softrobot_contortion_n21(contortion_geom, rod_cantilever_material, rod_cantilever_n21, dynamic_3d_sim, free_fall_env):
+    return dismech.SoftRobot(contortion_geom, rod_cantilever_material, rod_cantilever_n21, dynamic_3d_sim, free_fall_env)
+
+
+@pytest.fixture
+def time_stepper_contortion_n21(softrobot_contortion_n21):
+    start = 0.01
+    end = 0.09
+
+    end_points = np.array(np.where(
+        softrobot_contortion_n21.q[softrobot_contortion_n21.node_dof_indices].reshape(-1, 3)[:, 0] >= end)[0])
+    start_points = np.array(np.where(
+        softrobot_contortion_n21.q[softrobot_contortion_n21.node_dof_indices].reshape(-1, 3)[:, 0] <= start)[0])
+    return dismech.TimeStepper(softrobot_contortion_n21, np.concat((start_points, end_points)))
 
 # shell cantilever
 

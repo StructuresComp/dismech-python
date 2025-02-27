@@ -1,9 +1,9 @@
 import numpy as np
 from typing import Tuple, Dict
-from elastic_energy import ElasticEnergy  # Import the base class
+from .elastic_energy import ElasticEnergy  # Import the base class
 
 class bendingStrainEnergy(ElasticEnergy):
-    def __init__(self):
+    def __init__(self, material_properties):
         super().__init__(material_properties)
         self.kappa = np.zeros((1, 2))
         self.gradKappa = np.zeros((2, 11))

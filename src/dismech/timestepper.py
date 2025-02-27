@@ -91,7 +91,8 @@ class TimeStepper:
 
         # Add stretch spring contributions
         if robot.stretch_springs:
-            Fs, Js = fs.get_fs_js_vectorized(robot, q)
+            # Fs, Js = fs.get_fs_js_vectorized(robot, q)
+            Fs, Js = fs.get_fs_js(robot, q)
             forces += Fs
             jacobian += Js
 

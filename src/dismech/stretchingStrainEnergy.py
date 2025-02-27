@@ -1,6 +1,6 @@
 import numpy as np
 from typing import Tuple, Dict
-from elastic_energy import ElasticEnergy  # Import the base class
+from .elastic_energy import ElasticEnergy  # Import the base class
 
 class stretchingStrainEnergy(ElasticEnergy):
     def __init__(self, material_properties):
@@ -15,18 +15,18 @@ class stretchingStrainEnergy(ElasticEnergy):
         self.J: np.ndarray = np.zeros((6, 6))
 
     def get_strain(self, deformation: Dict[str, np.ndarray]) -> float:
-        node0, node1, l_k = deformation["node0"], deformation["node1"], deformation["reflen"]
+        node0, node1, l_k = deformation["node0"], deformation["node1"], deformation["nat_strain"]
         edge = node1 - node0
         edgeLen = np.linalg.norm(edge)
         self.eps = edgeLen / l_k - 1
         return self.eps
 
     def grad_hess_strain(self, deformation: Dict[str, np.ndarray]) -> Tuple[np.ndarray, np.ndarray]:
-        node0, node1, l_k = deformation["node0"], deformation["node1"], deformation["reflen"]
+        node0, node1, l_k = deformation["node0"], deformation["node1"], deformation["nat_strain"]
         edge = node1 - node0
         edgeLen = np.linalg.norm(edge)
         tangent = edge / edgeLen
-        self.eps = self.get_strain(node0, node1, l_k)
+        self.eps = self.get_strain(deformation)
 
         dF_unit = tangent / l_k
         dF = np.zeros((6,))

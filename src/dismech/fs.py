@@ -26,7 +26,8 @@ def get_fs_js(robot, q):
         #     "node1":n1p,
         #     "nat_strain":spring.ref_len,
         # }
-        # material_properties = {"K":spring.EA}
+        # K = spring.EA*spring.ref_len
+        # material_properties = {"K":K}
         # stretch_energy = stretchingStrainEnergy(material_properties)
 
         # dF, dJ = stretch_energy.grad_hess_energy_linear_elastic(deformation)

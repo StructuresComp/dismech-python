@@ -32,13 +32,17 @@ def time_parallel_helper(robot, truth):
 
 
 def reference_twist_helper(robot, truth):
-    new_twist = robot.compute_reference_twist(robot.bend_twist_springs, truth['a1'], truth['tangent'], truth['orgTwist'])
-    assert(np.allclose(new_twist, truth['refTwist']))
+    new_twist = robot.compute_reference_twist(
+        robot.bend_twist_springs, truth['a1'], truth['tangent'], truth['orgTwist'])
+    assert (np.allclose(new_twist, truth['refTwist']))
 
-def material_director_helper(robot, truth): 
-    m1, m2 = robot.compute_material_directors(truth['a1'], truth['a2'], truth['theta'])
-    assert(np.allclose(m1, truth['m1']))
-    assert(np.allclose(m2, truth['m2']))
+
+def material_director_helper(robot, truth):
+    m1, m2 = robot.compute_material_directors(
+        truth['a1'], truth['a2'], truth['theta'])
+    assert (np.allclose(m1, truth['m1']))
+    assert (np.allclose(m2, truth['m2']))
+
 
 def test_tangent_cantilever_n51(softrobot_rod_cantilever_n51):
     robot = softrobot_rod_cantilever_n51
@@ -56,6 +60,7 @@ def test_tangent_hexparachute_n6(softrobot_hexparachute_n6):
     valid_data = scipy.io.loadmat(
         rel_path('resources/parachute/hexparachute_multirod.mat'))
     tangent_helper(robot, robot.q, valid_data['q0_tangent'])
+
 
 def test_compute_space_parallel_cantilever_n51(softrobot_rod_cantilever_n51):
     robot = softrobot_rod_cantilever_n51
@@ -77,4 +82,3 @@ def test_compute_reference_twist_cantilever_n51(softrobot_rod_cantilever_n51):
     valid_data = scipy.io.loadmat(rel_path(
         'resources/rod_cantilever/rod_cantilever_n51_compute_reference_twist.mat'))
     reference_twist_helper(robot, valid_data)
-

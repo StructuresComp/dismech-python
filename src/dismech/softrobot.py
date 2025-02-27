@@ -187,6 +187,10 @@ class SoftRobot:
 
         return np.diag(mass)
 
+    def scale_mass_matrix(self, nodes: int | np.ndarray, scale: float):
+        self.__mass_matrix[np.ix_(self.map_node_to_dof(
+            nodes), self.map_node_to_dof(nodes))] *= scale
+
     def _compute_stiffness(self, geom: GeomParams, material: Material, G_rod: float) -> typing.Tuple[float, ...]:
         axs = geom.axs if geom.axs is not None else np.pi * self.__r0 ** 2
         EA = material.youngs_rod * axs

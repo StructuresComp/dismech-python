@@ -89,6 +89,7 @@ def test_pneunet_shorter(pneunet_shorter):
 
 # parachute
 
+
 def test_square_plate_30(square_plate_30):
     valid_data = scipy.io.loadmat(
         rel_path('resources/square_plate/random_mesh_30_create_geometry.mat'))

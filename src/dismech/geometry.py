@@ -287,7 +287,6 @@ class Geometry:
                     if len(vals := line.split(',')) != h_len[cur_h]:
                         raise ValueError(
                             "{} should have {} values".format(vals, h_len[cur_h]))
-
                     temp_array.append([float(val) for val in vals])
 
         # add last parameter

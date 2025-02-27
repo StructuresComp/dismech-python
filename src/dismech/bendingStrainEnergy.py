@@ -1,8 +1,10 @@
 import numpy as np
-from typing import Tuple
+from typing import Tuple, Dict
+from elastic_energy import ElasticEnergy  # Import the base class
 
-class BendingStrainEnergy:
+class bendingStrainEnergy(ElasticEnergy):
     def __init__(self):
+        super().__init__(material_properties)
         self.kappa = np.zeros((1, 2))
         self.gradKappa = np.zeros((2, 11))
         self.hessKappa = np.zeros((2, 11, 11))
@@ -12,8 +14,8 @@ class BendingStrainEnergy:
         self.F = np.zeros((11, 1))
         self.J = np.zeros((11, 11))
 
-    def get_strain_curvature(self, node0: np.ndarray, node1: np.ndarray, node2: np.ndarray) -> np.ndarray:
-        
+    def get_strain(self, deformation: Dict[str, np.ndarray]) -> np.ndarray:
+        node0, node1, node2 = deformation["node0"], deformation["node1"], deformation["node2"]
         ee = node1 - node0
         ef = node2 - node1
         
@@ -23,46 +25,9 @@ class BendingStrainEnergy:
         kb = 2.0 * np.cross(te, tf) / (1.0 + np.dot(te, tf))
         
         return kb
-    
-    def grad_strain_curvature(self, node0=None, node1=None, node2=None, m1e=None, m2e=None, m1f=None, m2f=None) -> np.ndarray:
-        ee = node1 - node0
-        ef = node2 - node1
-        norm_e = np.linalg.norm(ee)
-        norm_f = np.linalg.norm(ef)
-        te = ee / norm_e
-        tf = ef / norm_f
 
-        # Curvature binormal
-        kb = self.get_strain_curvature(self, node0, node1, node2)
-        chi = 1.0 + np.dot(te, tf)
-        tilde_t = (te + tf) / chi
-        tilde_d1 = (m1e + m1f) / chi
-        tilde_d2 = (m2e + m2f) / chi
-
-        # Curvatures
-        kappa1 = 0.5 * np.dot(kb, m2e + m2f)
-        kappa2 = - 0.5 * np.dot(kb, m1e + m1f)
-
-        Dkappa1De = 1.0 / norm_e * (-kappa1 * tilde_t + np.cross(tf, tilde_d2))
-        Dkappa1Df = 1.0 / norm_f * (-kappa1 * tilde_t - np.cross(te, tilde_d2))
-        Dkappa2De = 1.0 / norm_e * (-kappa2 * tilde_t - np.cross(tf, tilde_d1))
-        Dkappa2Df = 1.0 / norm_f * (-kappa2 * tilde_t + np.cross(te, tilde_d1))
-        
-        self.gradKappa[0, 0:2] = -Dkappa1De
-        self.gradKappa[0, 3:5] = Dkappa1De - Dkappa1Df
-        self.gradKappa[0, 6:8] = Dkappa1Df
-        self.gradKappa[1, 0:2] = -Dkappa2De
-        self.gradKappa[1, 3:5] = Dkappa2De - Dkappa2Df
-        self.gradKappa[1, 6:8] = Dkappa2Df
-
-        self.gradKappa[0, 9] = -0.5 * np.dot(kb, m1e)
-        self.gradKappa[0, 10] = -0.5 * np.dot(kb, m1f)
-        self.gradKappa[1, 9] = -0.5 * np.dot(kb, m2e)
-        self.gradKappa[1, 10] = -0.5 * np.dot(kb, m2f)
-
-        return self.gradKappa
-
-    def grad_and_hess_strain_curvature(self, node0=None, node1=None, node2=None, m1e=None, m2e=None, m1f=None, m2f=None) -> Tuple[np.ndarray, np.ndarray]:
+    def grad_hess_strain(self, deformation: Dict[str, np.ndarray]) -> Tuple[np.ndarray, np.ndarray]:
+        node0, node1, node2, m1e, m2e, m1f, m2f = deformation["node0"], deformation["node1"], deformation["node2"], deformation["m1e"], deformation["m2e"], deformation["m1f"], deformation["m2f"]
 
         ee = node1 - node0
         ef = node2 - node1
@@ -83,18 +48,17 @@ class BendingStrainEnergy:
         kappa2 = - 0.5 * np.dot(kb, m1e + m1f)
 
         # Gradient
-        
         Dkappa1De = 1.0 / norm_e * (-kappa1 * tilde_t + np.cross(tf, tilde_d2))
         Dkappa1Df = 1.0 / norm_f * (-kappa1 * tilde_t - np.cross(te, tilde_d2))
         Dkappa2De = 1.0 / norm_e * (-kappa2 * tilde_t - np.cross(tf, tilde_d1))
         Dkappa2Df = 1.0 / norm_f * (-kappa2 * tilde_t + np.cross(te, tilde_d1))
         
-        self.gradKappa[0, 0:2] = -Dkappa1De
-        self.gradKappa[0, 3:5] = Dkappa1De - Dkappa1Df
-        self.gradKappa[0, 6:8] = Dkappa1Df
-        self.gradKappa[1, 0:2] = -Dkappa2De
-        self.gradKappa[1, 3:5] = Dkappa2De - Dkappa2Df
-        self.gradKappa[1, 6:8] = Dkappa2Df
+        self.gradKappa[0, 0:3] = -Dkappa1De
+        self.gradKappa[0, 3:6] = Dkappa1De - Dkappa1Df
+        self.gradKappa[0, 6:9] = Dkappa1Df
+        self.gradKappa[1, 0:3] = -Dkappa2De
+        self.gradKappa[1, 3:6] = Dkappa2De - Dkappa2Df
+        self.gradKappa[1, 6:9] = Dkappa2Df
 
         self.gradKappa[0, 9] = -0.5 * np.dot(kb, m1e)
         self.gradKappa[0, 10] = -0.5 * np.dot(kb, m1f)
@@ -102,7 +66,6 @@ class BendingStrainEnergy:
         self.gradKappa[1, 10] = -0.5 * np.dot(kb, m2f)
 
         # Hessian
-
         # Initialize Hessians
         DDkappa1 = np.zeros((11, 11)) # Hessian of kappa1
         DDkappa2 = np.zeros((11, 11)) # Hessian of kappa2
@@ -182,92 +145,92 @@ class BendingStrainEnergy:
         D2kappa2DfDthetaf = 1.0 / norm_f * (0.5 * np.dot(kb,m2f) * tilde_t + 1.0 / chi * np.cross(te,m2f))
 
         # Curvature terms
-        DDkappa1[0:2,0:2] = D2kappa1De2
-        DDkappa1[0:2,3:5] = - D2kappa1De2 + D2kappa1DfDe
-        DDkappa1[0:2,6:8] = - D2kappa1DfDe
-        DDkappa1[3:5,0:2] = - D2kappa1De2 + D2kappa1DeDf
-        DDkappa1[3:5,3:5] = D2kappa1De2 - D2kappa1DeDf - D2kappa1DfDe + D2kappa1Df2
-        DDkappa1[3:5,6:8] = D2kappa1DfDe - D2kappa1Df2
-        DDkappa1[6:8,0:2] = - D2kappa1DeDf
-        DDkappa1[6:8,3:5] = D2kappa1DeDf - D2kappa1Df2
-        DDkappa1[6:8,6:8] = D2kappa1Df2
+        DDkappa1[0:3,0:3] = D2kappa1De2
+        DDkappa1[0:3,3:6] = - D2kappa1De2 + D2kappa1DfDe
+        DDkappa1[0:3,6:9] = - D2kappa1DfDe
+        DDkappa1[3:6,0:3] = - D2kappa1De2 + D2kappa1DeDf
+        DDkappa1[3:6,3:6] = D2kappa1De2 - D2kappa1DeDf - D2kappa1DfDe + D2kappa1Df2
+        DDkappa1[3:6,6:9] = D2kappa1DfDe - D2kappa1Df2
+        DDkappa1[6:9,0:3] = - D2kappa1DeDf
+        DDkappa1[6:9,3:6] = D2kappa1DeDf - D2kappa1Df2
+        DDkappa1[6:9,6:9] = D2kappa1Df2
 
         # Twist terms
         DDkappa1[9,9] = D2kappa1Dthetae2
         DDkappa1[10,10] = D2kappa1Dthetaf2
 
         # Curvature-twist coupled terms
-        DDkappa1[0:2,9] = - D2kappa1DeDthetae
-        DDkappa1[3:5,9] = D2kappa1DeDthetae - D2kappa1DfDthetae
-        DDkappa1[6:8,9] = D2kappa1DfDthetae
-        DDkappa1[9,0:2] = np.transpose(DDkappa1[0:2,9])
-        DDkappa1[9,3:5] = np.transpose(DDkappa1[3:5,9])
-        DDkappa1[9,6:8] = np.transpose(DDkappa1[6:8,9])
+        DDkappa1[0:3,9] = - D2kappa1DeDthetae
+        DDkappa1[3:6,9] = D2kappa1DeDthetae - D2kappa1DfDthetae
+        DDkappa1[6:9,9] = D2kappa1DfDthetae
+        DDkappa1[9,0:3] = np.transpose(DDkappa1[0:3,9])
+        DDkappa1[9,3:6] = np.transpose(DDkappa1[3:6,9])
+        DDkappa1[9,6:9] = np.transpose(DDkappa1[6:9,9])
 
         # Curvature-twist coupled terms
-        DDkappa1[0:2,10] = - D2kappa1DeDthetaf
-        DDkappa1[3:5,10] = D2kappa1DeDthetaf - D2kappa1DfDthetaf
-        DDkappa1[6:8,10] = D2kappa1DfDthetaf
-        DDkappa1[10,0:2] = np.transpose(DDkappa1[0:2,10])
-        DDkappa1[10,3:5] = np.transpose(DDkappa1[3:5,10])
-        DDkappa1[10,6:8] = np.transpose(DDkappa1[6:8,10])
+        DDkappa1[0:3,10] = - D2kappa1DeDthetaf
+        DDkappa1[3:6,10] = D2kappa1DeDthetaf - D2kappa1DfDthetaf
+        DDkappa1[6:9,10] = D2kappa1DfDthetaf
+        DDkappa1[10,0:3] = np.transpose(DDkappa1[0:3,10])
+        DDkappa1[10,3:6] = np.transpose(DDkappa1[3:6,10])
+        DDkappa1[10,6:9] = np.transpose(DDkappa1[6:9,10])
 
         # Curvature terms
-        DDkappa2[0:2,0:2] = D2kappa2De2
-        DDkappa2[0:2,3:5] = - D2kappa2De2 + D2kappa2DfDe
-        DDkappa2[0:2,6:8] = - D2kappa2DfDe
-        DDkappa2[3:5,0:2] = - D2kappa2De2 + D2kappa2DeDf
-        DDkappa2[3:5,3:5] = D2kappa2De2 - D2kappa2DeDf - D2kappa2DfDe + D2kappa2Df2
-        DDkappa2[3:5,6:8] = D2kappa2DfDe - D2kappa2Df2
-        DDkappa2[6:8,0:2] = - D2kappa2DeDf
-        DDkappa2[6:8,3:5] = D2kappa2DeDf - D2kappa2Df2
-        DDkappa2[6:8,6:8] = D2kappa2Df2
+        DDkappa2[0:3,0:3] = D2kappa2De2
+        DDkappa2[0:3,3:6] = - D2kappa2De2 + D2kappa2DfDe
+        DDkappa2[0:3,6:9] = - D2kappa2DfDe
+        DDkappa2[3:6,0:3] = - D2kappa2De2 + D2kappa2DeDf
+        DDkappa2[3:6,3:6] = D2kappa2De2 - D2kappa2DeDf - D2kappa2DfDe + D2kappa2Df2
+        DDkappa2[3:6,6:9] = D2kappa2DfDe - D2kappa2Df2
+        DDkappa2[6:9,0:3] = - D2kappa2DeDf
+        DDkappa2[6:9,3:6] = D2kappa2DeDf - D2kappa2Df2
+        DDkappa2[6:9,6:9] = D2kappa2Df2
 
         # Twist terms
         DDkappa2[9,9] = D2kappa2Dthetae2
         DDkappa2[10,10] = D2kappa2Dthetaf2
 
         # Curvature-twist coupled terms
-        DDkappa2[0:2,9] = - D2kappa2DeDthetae
-        DDkappa2[3:5,9] = D2kappa2DeDthetae - D2kappa2DfDthetae
-        DDkappa2[6:8,9] = D2kappa2DfDthetae
-        DDkappa2[9,0:2] = np.transpose(DDkappa2[0:2,9])
-        DDkappa2[9,3:5] = np.transpose(DDkappa2[3:5,9])
-        DDkappa2[9,6:8] = np.transpose(DDkappa2[6:8,9])
+        DDkappa2[0:3,9] = - D2kappa2DeDthetae
+        DDkappa2[3:6,9] = D2kappa2DeDthetae - D2kappa2DfDthetae
+        DDkappa2[6:9,9] = D2kappa2DfDthetae
+        DDkappa2[9,0:3] = np.transpose(DDkappa2[0:3,9])
+        DDkappa2[9,3:6] = np.transpose(DDkappa2[3:6,9])
+        DDkappa2[9,6:9] = np.transpose(DDkappa2[6:9,9])
 
         # Curvature-twist coupled terms
-        DDkappa2[0:2,10] = - D2kappa2DeDthetaf
-        DDkappa2[3:5,10] = D2kappa2DeDthetaf - D2kappa2DfDthetaf
-        DDkappa2[6:8,10] = D2kappa2DfDthetaf
-        DDkappa2[10,0:2] = np.transpose(DDkappa2[0:2,10])
-        DDkappa2[10,3:5] = np.transpose(DDkappa2[3:5,10])
-        DDkappa2[10,6:8] = np.transpose(DDkappa2[6:8,10])
+        DDkappa2[0:3,10] = - D2kappa2DeDthetaf
+        DDkappa2[3:6,10] = D2kappa2DeDthetaf - D2kappa2DfDthetaf
+        DDkappa2[6:9,10] = D2kappa2DfDthetaf
+        DDkappa2[10,0:3] = np.transpose(DDkappa2[0:3,10])
+        DDkappa2[10,3:6] = np.transpose(DDkappa2[3:6,10])
+        DDkappa2[10,6:9] = np.transpose(DDkappa2[6:9,10])
 
         self.hessKappa = np.concatenate((DDkappa1[np.newaxis, :, :], DDkappa2[np.newaxis, :, :]), axis=0)
         
         return self.gradKappa, self.hessKappa
 
-    def get_energy_bending_linear_elastic(self, node0: np.ndarray, node1: np.ndarray, node2: np.ndarray, l_eff: float, EI1: float, EI2: float, kappaBar: np.ndarray) -> float:
-        self.kappa = self.get_strain_curvature(node0, node1, node2)
-        dKappa = self.kappa - kappaBar
-        self.E = 0.5 * dKappa * np.array([[0, EI1],[EI2,0]]) * dKappa.T / l_eff # check this
-        return self.E
+    # def get_energy_bending_linear_elastic(self, node0: np.ndarray, node1: np.ndarray, node2: np.ndarray, l_eff: float, EI1: float, EI2: float, kappaBar: np.ndarray) -> float:
+    #     self.kappa = self.get_strain_curvature(node0, node1, node2)
+    #     dKappa = self.kappa - kappaBar
+    #     self.E = 0.5 * dKappa * np.array([[0, EI1],[EI2,0]]) * dKappa.T / l_eff # check this
+    #     return self.E
 
-    def grad_and_hess_energy_bending_linear_elastic(self, node0: np.ndarray, node1: np.ndarray, node2: np.ndarray, l_eff: float, EI1: float, EI2: float, kappaBar: np.ndarray) -> Tuple[np.ndarray, np.ndarray]:
-        self.kappa = self.get_strain_curvature(node0, node1, node2)
-        self.gradKappa, self.hessKappa = self.grad_and_hess_strain_curvature(node0, node1, node2)
-        dKappa = self.kappa - kappaBar
+    # def grad_and_hess_energy_bending_linear_elastic(self, node0: np.ndarray, node1: np.ndarray, node2: np.ndarray, l_eff: float, EI1: float, EI2: float, kappaBar: np.ndarray) -> Tuple[np.ndarray, np.ndarray]:
+    #     self.kappa = self.get_strain_curvature(node0, node1, node2)
+    #     self.gradKappa, self.hessKappa = self.grad_and_hess_strain_curvature(node0, node1, node2)
+    #     dKappa = self.kappa - kappaBar
 
-        gradE_strain = dKappa* np.array([[0, EI1],[EI2,0]]) / l_eff
-        hessE_strain = np.array([[0, EI1],[EI2,0]]) / l_eff
+    #     gradE_strain = dKappa* np.array([[0, EI1],[EI2,0]]) / l_eff
+    #     hessE_strain = np.array([[0, EI1],[EI2,0]]) / l_eff
 
-        self.gradE = gradE_strain * self.gradKappa
-        self.hessE = gradE_strain * self.hessKappa + (self.gradKappa.T * hessE_strain *  self.gradKappa)
+    #     self.gradE = gradE_strain * self.gradKappa
+    #     self.hessE = gradE_strain * self.hessKappa + (self.gradKappa.T * hessE_strain *  self.gradKappa)
 
-        self.F = -self.gradE.T
-        self.J = -self.hessE
+    #     self.F = -self.gradE.T
+    #     self.J = -self.hessE
 
-        return self.F, self.J
+    #     return self.F, self.J
     
     @staticmethod
     def crossMat(a):

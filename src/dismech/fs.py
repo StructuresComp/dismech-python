@@ -11,31 +11,31 @@ def get_fs_js(robot, q):
     Js = np.zeros((n_dof, n_dof))
 
     for spring in robot.stretch_springs:
-        n0, n1 = spring.node_indices
+        n0, n1 = spring.nodes_ind
         n0p = q[robot.map_node_to_dof(n0)]
         n1p = q[robot.map_node_to_dof(n1)]
-        ind = spring.indices
+        ind = spring.ind
 
-        # dF, dJ = eb.gradEs_hessEs_struct(
-        #     n_dof, ind, n0p, n1p, spring)
+        dF, dJ = eb.gradEs_hessEs_struct(
+            n_dof, ind, n0p, n1p, spring)
 
-        # Fs[ind] -= dF[ind]
-        # Js[np.ix_(ind, ind)] -= dJ[np.ix_(ind, ind)]
+        Fs[ind] -= dF[ind]
+        Js[np.ix_(ind, ind)] -= dJ[np.ix_(ind, ind)]
 
-        deformation = {
-            "node0":n0p,
-            "node1":n1p,
-            "reflen":spring.ref_len,
-            "nat_strain":0.0
-        }
-        K = spring.EA*spring.ref_len
-        material_properties = {"K":K}
-        stretch_energy = stretchingStrainEnergy(material_properties)
+        #deformation = {
+        #    "node0":n0p,
+        #    "node1":n1p,
+        #    "reflen":spring.ref_len,
+        #    "nat_strain":0.0
+        #}
+        #K = spring.EA*spring.ref_len
+        #material_properties = {"K":K}
+        #stretch_energy = stretchingStrainEnergy(material_properties)
 
-        dF, dJ = stretch_energy.grad_hess_energy_linear_elastic(deformation)
+        #dF, dJ = stretch_energy.grad_hess_energy_linear_elastic(deformation)
 
-        Fs[ind] -= dF
-        Js[np.ix_(ind, ind)] -= dJ
+        #Fs[ind] -= dF
+        #Js[np.ix_(ind, ind)] -= dJ
 
 
     return Fs, Js
@@ -119,9 +119,9 @@ def get_fs_js_vectorized(robot, q):
     springs = robot.stretch_springs
 
     # Batch collect all spring data
-    n0_indices = np.array([s.node_indices[0] for s in springs])
-    n1_indices = np.array([s.node_indices[1] for s in springs])
-    all_indices = np.array([s.indices for s in springs])
+    n0_indices = np.array([s.nodes_ind[0] for s in springs])
+    n1_indices = np.array([s.nodes_ind[1] for s in springs])
+    all_indices = np.array([s.ind for s in springs])
 
     # Vectorized position retrieval
     n0_pos = q[robot.map_node_to_dof(n0_indices)]  # shape (n_springs, 3)

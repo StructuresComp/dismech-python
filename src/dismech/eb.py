@@ -1,4 +1,4 @@
-from . import hinge_spring
+from .springs import HingeSpring
 import numpy as np
 
 
@@ -628,8 +628,8 @@ def gradEt_hessEt_panetta_vectorized(node0, node1, node2, theta_e, theta_f, refT
 
 
 def gradEb_hessEb_shell_vectorized(x0, x1, x2, x3, kb, theta_bar):
-    theta = hinge_spring.HingeSpring.get_theta(x0, x1, x2, x3)
-    grad_theta, hess_theta = hinge_spring.HingeSpring.get_grad_hess_theta(x0, x1, x2, x3)
+    theta = HingeSpring.get_theta(x0, x1, x2, x3)
+    grad_theta, hess_theta = HingeSpring.get_grad_hess_theta(x0, x1, x2, x3)
     
     theta_diff = theta - theta_bar
     

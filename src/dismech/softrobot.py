@@ -4,7 +4,9 @@ import typing
 
 import numpy as np
 
-from . import environment, geometry, bend_twist_spring, stretch_spring, hinge_spring
+from .environment import Environment
+from .geometry import Geometry
+from .springs import BendTwistSpring, StretchSpring, HingeSpring
 
 
 @dataclasses.dataclass
@@ -49,8 +51,8 @@ _TANGENT_THRESHOLD = 1e-10
 
 class SoftRobot:
     def __init__(self, geom: GeomParams, material: Material,
-                 geo: geometry.Geometry, sim_params: SimParams,
-                 env: environment.Environment):
+                 geo: Geometry, sim_params: SimParams,
+                 env: Environment):
         self.__sim_params = sim_params
         self.__env = env
 
@@ -221,7 +223,7 @@ class SoftRobot:
                 (self.__h ** 3) / 12
         return ks, kb
 
-    def _initialize_directors_and_springs(self, geo: geometry.Geometry, sim_params: SimParams):
+    def _initialize_directors_and_springs(self, geo: Geometry, sim_params: SimParams):
         # Initialize edge combinations for contact (simplified)
         self.__edge_combos = self._construct_edge_combinations(
             np.concatenate((geo.rod_edges, geo.rod_shell_joint_edges)
@@ -236,20 +238,20 @@ class SoftRobot:
 
         # Initialize springs
         n_rod = geo.rod_stretch_springs.shape[0]
-        rod_springs = [stretch_spring.StretchSpring(self.ref_len[i], spring, self)
+        rod_springs = [StretchSpring(self.ref_len[i], spring, self)
                        for i, spring in enumerate(geo.rod_stretch_springs)]
-        shell_springs = [stretch_spring.StretchSpring(self.ref_len[i + n_rod], spring, self, self.__ks[i + n_rod])
+        shell_springs = [StretchSpring(self.ref_len[i + n_rod], spring, self, self.__ks[i + n_rod])
                          for i, spring in enumerate(geo.shell_stretch_springs)]
         self.__stretch_springs = rod_springs + shell_springs
 
         self.__bend_twist_springs = [
-            bend_twist_spring.BendTwistSpring(
+            BendTwistSpring(
                 spring, sign, np.array([0, 0]), 0, self)
             for spring, sign in zip(geo.bend_twist_springs, geo.bend_twist_signs)
         ]
 
         self.__hinge_springs = [
-            hinge_spring.HingeSpring(spring, self) for spring in geo.hinges
+            HingeSpring(spring, self) for spring in geo.hinges
         ]
 
     @staticmethod
@@ -354,7 +356,7 @@ class SoftRobot:
         for i, spring in enumerate(self.__bend_twist_springs):
             spring.kappa_bar = np.array([kappa1[i], kappa2[i]])
 
-    def compute_reference_twist(self, springs: typing.List[bend_twist_spring.BendTwistSpring],
+    def compute_reference_twist(self, springs: typing.List[BendTwistSpring],
                                 a1: np.ndarray, tangent: np.ndarray,
                                 ref_twist: np.ndarray) -> np.ndarray:
         if len(springs) == 0:
@@ -674,17 +676,17 @@ class SoftRobot:
         return self.__a2.view()
 
     @property
-    def bend_twist_springs(self) -> typing.List[bend_twist_spring.BendTwistSpring]:
+    def bend_twist_springs(self) -> typing.List[BendTwistSpring]:
         """List of bend-twist spring elements"""
         return self.__bend_twist_springs
 
     @property
-    def stretch_springs(self) -> typing.List[stretch_spring.StretchSpring]:
+    def stretch_springs(self) -> typing.List[StretchSpring]:
         """List of stretch spring elements"""
         return self.__stretch_springs
 
     @property
-    def hinge_springs(self) -> typing.List[hinge_spring.HingeSpring]:
+    def hinge_springs(self) -> typing.List[HingeSpring]:
         """List of hinge spring elements"""
         return self.__hinge_springs
 
@@ -725,12 +727,12 @@ class SoftRobot:
 
     @property
     def sim_params(self) -> SimParams:
-        """Simulation parameters container"""
+        """Simulation parameters object"""
         return self.__sim_params
 
     @property
-    def env(self) -> environment.Environment:
-        """Environment parameters container"""
+    def env(self) -> Environment:
+        """Environment parameters object"""
         return self.__env
 
     @property

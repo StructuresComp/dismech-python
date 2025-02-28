@@ -7,8 +7,7 @@ class ElasticEnergy(ABC):
         self.material_properties = material_properties
     
     def get_energy_linear_elastic(self, dictionary):
-        # K = dictionary["K"]  # stiffness (with discrete geometry considerations) : unit Nm (same unit as energy)
-        K = self.material_properties["K"] # K unit: Nm (same unit as energy)
+        K = self.material_properties["K"] # stiffness (with discrete geometry considerations) : unit Nm (same unit as energy)
         nat_strain = dictionary["nat_strain"]
         strain = self.get_strain(dictionary)
         del_strain = strain - nat_strain
@@ -21,8 +20,7 @@ class ElasticEnergy(ABC):
         return Energy
     
     def grad_hess_energy_linear_elastic(self, dictionary):
-        # K = dictionary["K"]  # stiffness (with discrete geometry considerations) : unit Nm (same unit as energy)
-        K = self.material_properties["K"] # K unit: Nm (same unit as energy)
+        K = self.material_properties["K"] # stiffness (with discrete geometry considerations) : unit Nm (same unit as energy)
         nat_strain = dictionary["nat_strain"]
         
         strain = self.get_strain(dictionary)

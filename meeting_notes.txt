@@ -1,0 +1,68 @@
+class TimeStepper:
+
+    def __init__(self):
+        computeSpaceParallel()
+
+    def execute_step(softRobot) -> softRobot:
+        pass
+
+    def __computeSpaceParallel(self):
+        pass
+    
+    def __computeMaterialDirectors(self):
+        pass
+
+    def __setKappa(self):
+        pass
+    
+    def __computeReferenceTwist(self):
+        pass
+
+    def __updatePreComp(self):
+        pass
+
+    def __computeTimeParallel():
+        pass
+
+    def __computeTangent():
+        pass
+
+    def __getFsJs():
+
+    def __getFbJb():
+
+    def __getFtJt():
+
+    def __getShellFbJb():
+
+    def __getShellMidedgeFbJb():
+
+    # External force functions (gravity, viscous, aero ...)
+
+    def __linearsolver():
+
+    def __linesearch():
+
+    def __newtondamper():
+
+
+
+
+
+a = TimeStepper()
+a.execute_step()
+
+softrobot:
+    FindFixedFreeDOF
+
+plot standalone
+--------------------------------------------------------------------------------------------------------------------------------
+2-27-25
+- vectorize energy computations
+- abstract away inertial force (input: old DOF, velocity, acceleration)
+- remove external force in different file than TimeStepper
+- check about energy initialization
+- boundary condition est functions (have time as input ? -- ABAQUS disp())
+- different types of integration schemes
+- pardiso ? (pip install)
+- beforeTimestep fn ?

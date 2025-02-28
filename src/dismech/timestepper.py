@@ -1,6 +1,8 @@
 import copy
 
 import numpy as np
+import pypardiso
+from scipy.sparse import csr_matrix
 
 from . import fs
 from .softrobot import SoftRobot
@@ -45,8 +47,9 @@ class TimeStepper:
             f_free = forces[free_idx]
             j_free = jacobian[np.ix_(free_idx, free_idx)]
 
-            # Regularized matrix solver
-            dq_free = self._safe_solve(j_free, f_free)
+            # Linear system solver
+            # dq_free = self._safe_solve(j_free, f_free)
+            dq_free = self._pardiso_solve(j_free, f_free)
 
             # Adaptive damping and update
             alpha = self._adaptive_damping(alpha, iteration)
@@ -129,6 +132,14 @@ class TimeStepper:
             return np.zeros_like(F)
 
         return np.linalg.solve(J, F)
+    
+    def _pardiso_solve(self, J, F):
+        """Pardiso solver (pypardiso)"""
+        J_sparse = csr_matrix(J)
+        if np.linalg.norm(F) < self.min_force:
+            return np.zeros_like(F)
+        
+        return pypardiso.spsolve(J_sparse, F)
 
     def _adaptive_damping(self, alpha, iteration):
         if iteration < 10:

@@ -91,14 +91,15 @@ class TimeStepper:
 
         # Add stretch spring contributions
         if robot.stretch_springs:
-            # Fs, Js = fs.get_fs_js_vectorized(robot, q)
-            Fs, Js = fs.get_fs_js(robot, q)
+            Fs, Js = fs.get_fs_js_vectorized(robot, q)
+            # Fs, Js = fs.get_fs_js(robot, q)
             forces += Fs
             jacobian += Js
 
         # Add bend/twist contributions
         if robot.bend_twist_springs:
             Fb, Jb = fs.get_fb_jb_vectorized(robot, q, m1, m2)
+            # Fb, Jb = fs.get_fb_jb(robot, q, m1, m2)
             forces += Fb
             jacobian += Jb
             if not robot.sim_params.two_d_sim:

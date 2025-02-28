@@ -15,16 +15,21 @@ class bendingStrainEnergy(ElasticEnergy):
         self.J = np.zeros((11, 11))
 
     def get_strain(self, deformation: Dict[str, np.ndarray]) -> np.ndarray:
-        node0, node1, node2 = deformation["node0"], deformation["node1"], deformation["node2"]
+        node0, node1, node2, m1e, m2e, m1f, m2f = deformation["node0"], deformation["node1"], deformation["node2"], deformation["m1e"], deformation["m2e"], deformation["m1f"], deformation["m2f"]
         ee = node1 - node0
         ef = node2 - node1
         
         te = ee / np.linalg.norm(ee)
         tf = ef / np.linalg.norm(ef)
         
-        kb = 2.0 * np.cross(te, tf) / (1.0 + np.dot(te, tf))
+        chi = 1.0 + np.dot(te, tf)
+        kb = 2.0 * np.cross(te, tf) / chi # Curvature binormal
+
+        # Curvatures
+        kappa1 = 0.5 * np.dot(kb, m2e + m2f)
+        kappa2 = - 0.5 * np.dot(kb, m1e + m1f)
         
-        return kb
+        return np.array([kappa1, kappa2])
 
     def grad_hess_strain(self, deformation: Dict[str, np.ndarray]) -> Tuple[np.ndarray, np.ndarray]:
         node0, node1, node2, m1e, m2e, m1f, m2f = deformation["node0"], deformation["node1"], deformation["node2"], deformation["m1e"], deformation["m2e"], deformation["m1f"], deformation["m2f"]
@@ -36,9 +41,8 @@ class bendingStrainEnergy(ElasticEnergy):
         te = ee / norm_e
         tf = ef / norm_f
 
-        # Curvature binormal
-        kb = self.get_strain_curvature(self, node0, node1, node2)
         chi = 1.0 + np.dot(te, tf)
+        kb = 2.0 * np.cross(te, tf) / chi # Curvature binormal
         tilde_t = (te + tf) / chi
         tilde_d1 = (m1e + m1f) / chi
         tilde_d2 = (m2e + m2f) / chi
@@ -60,9 +64,9 @@ class bendingStrainEnergy(ElasticEnergy):
         self.gradKappa[1, 3:6] = Dkappa2De - Dkappa2Df
         self.gradKappa[1, 6:9] = Dkappa2Df
 
-        self.gradKappa[0, 9] = -0.5 * np.dot(kb, m1e)
+        self.gradKappa[0, 9]  = -0.5 * np.dot(kb, m1e)
         self.gradKappa[0, 10] = -0.5 * np.dot(kb, m1f)
-        self.gradKappa[1, 9] = -0.5 * np.dot(kb, m2e)
+        self.gradKappa[1, 9]  = -0.5 * np.dot(kb, m2e)
         self.gradKappa[1, 10] = -0.5 * np.dot(kb, m2f)
 
         # Hessian

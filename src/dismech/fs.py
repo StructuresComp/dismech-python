@@ -2,6 +2,7 @@ import numpy as np
 
 from . import eb
 from .stretchingStrainEnergy import stretchingStrainEnergy
+from .bendingStrainEnergy import bendingStrainEnergy
 
 def get_fs_js(robot, q):
     n_dof = robot.n_dof
@@ -15,25 +16,26 @@ def get_fs_js(robot, q):
         n1p = q[robot.map_node_to_dof(n1)]
         ind = spring.indices
 
-        dF, dJ = eb.gradEs_hessEs_struct(
-            n_dof, ind, n0p, n1p, spring)
+        # dF, dJ = eb.gradEs_hessEs_struct(
+        #     n_dof, ind, n0p, n1p, spring)
 
-        Fs[ind] -= dF[ind]
-        Js[np.ix_(ind, ind)] -= dJ[np.ix_(ind, ind)]
+        # Fs[ind] -= dF[ind]
+        # Js[np.ix_(ind, ind)] -= dJ[np.ix_(ind, ind)]
 
-        # deformation = {
-        #     "node0":n0p,
-        #     "node1":n1p,
-        #     "nat_strain":spring.ref_len,
-        # }
-        # K = spring.EA*spring.ref_len
-        # material_properties = {"K":K}
-        # stretch_energy = stretchingStrainEnergy(material_properties)
+        deformation = {
+            "node0":n0p,
+            "node1":n1p,
+            "reflen":spring.ref_len,
+            "nat_strain":0.0
+        }
+        K = spring.EA*spring.ref_len
+        material_properties = {"K":K}
+        stretch_energy = stretchingStrainEnergy(material_properties)
 
-        # dF, dJ = stretch_energy.grad_hess_energy_linear_elastic(deformation)
+        dF, dJ = stretch_energy.grad_hess_energy_linear_elastic(deformation)
 
-        # Fs[ind] -= dF
-        # Js[np.ix_(ind, ind)] -= dJ
+        Fs[ind] -= dF
+        Js[np.ix_(ind, ind)] -= dJ
 
 
     return Fs, Js
@@ -62,7 +64,7 @@ def get_fb_jb(robot, q, m1, m2):
 
         dF, dJ = eb.gradEb_hessEb_panetta(
             n_dof, ind, n0p, n1p, n2p, m1e, m2e, m1f, m2f, spring)
-
+        
         if spring.sgn[0] != 1:
             e0_dof = robot.map_edge_to_dof(e0)
             dF[e0_dof] *= -1
@@ -77,6 +79,37 @@ def get_fb_jb(robot, q, m1, m2):
 
         Fb[ind] -= dF[ind]
         Jb[np.ix_(ind, ind)] -= dJ[np.ix_(ind, ind)]
+        
+        # deformation = {
+        #     "node0":n0p,
+        #     "node1":n1p,
+        #     "node2":n2p,
+        #     "voronoilen":spring.voronoi_len,
+        #     "nat_strain":spring.kappa_bar,
+        #     "m1e": m1e,
+        #     "m2e": m2e,
+        #     "m1f": m1f,
+        #     "m2f": m2f
+        # }
+        # K = np.array([[spring.stiff_EI[0] / spring.voronoi_len, 0],
+        #       [0, spring.stiff_EI[1] / spring.voronoi_len]])
+        # material_properties = {"K": K}
+        # bend_energy = bendingStrainEnergy(material_properties)
+
+        # dF, dJ = bend_energy.grad_hess_energy_linear_elastic(deformation)
+
+        # if spring.sgn[0] != 1:
+        #     dF[9] *= -1
+        #     dJ[9, :] *= -1
+        #     dJ[:, 9] *= -1
+
+        # if spring.sgn[1] != 1:
+        #     dF[10] *= -1
+        #     dJ[10] *= -1
+        #     dJ[:, 10] *= -1
+
+        # Fb[ind] -= dF
+        # Jb[np.ix_(ind, ind)] -= dJ
 
     return Fb, Jb
 

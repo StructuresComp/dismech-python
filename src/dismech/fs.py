@@ -1,8 +1,6 @@
 import numpy as np
 
 from . import eb
-from .stretchingStrainEnergy import stretchingStrainEnergy
-from .bendingStrainEnergy import bendingStrainEnergy
 
 def get_fs_js(robot, q):
     n_dof = robot.n_dof

@@ -2,27 +2,6 @@ import numpy as np
 
 
 class HingeSpring:
-    """
-                 x2
-                 /\
-                /  \
-             e1/    \e3
-              /  t0  \
-             /        \
-            /    e0    \
-          x0------------x1
-            \          /
-             \   t1   /
-              \      /
-             e2\    /e4
-                \  /
-                 \/
-                 x3
-
-        Edge orientation: e0,e1,e2 point away from x0
-                             e3,e4 point away from x1
-    """
-
     def __init__(self, indices: np.ndarray, robot, kb: float = None):
         self.kb = kb or robot.kb
         self.nodes_ind = indices

@@ -6,6 +6,7 @@ from scipy.sparse import csr_matrix
 
 from . import fs
 from .softrobot import SoftRobot
+from .elastics import StretchEnergy
 from .external_forces import compute_gravity_forces, compute_aerodynamic_forces_vectorized
 
 
@@ -18,6 +19,7 @@ class TimeStepper:
         self.min_force = 1e-8  # Threshold for negligible forces
 
         # TODO: Initialize energies
+        self.__stretch_energy = StretchEnergy(robot.stretch_springs)
 
     def step(self, robot: SoftRobot = None, debug=False) -> SoftRobot:
         robot = robot or self.robot
@@ -100,8 +102,8 @@ class TimeStepper:
 
         # Add stretch spring contributions
         if robot.stretch_springs:
-            Fs, Js = fs.get_fs_js_vectorized(robot, q)
-            # Fs, Js = fs.get_fs_js(robot, q)
+            #Fs, Js = fs.get_fs_js_vectorized(robot, q)
+            Fs, Js = self.__stretch_energy.grad_hess_energy_linear_elastic(q)
             forces += Fs
             jacobian += Js
 

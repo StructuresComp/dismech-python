@@ -10,17 +10,6 @@ class BendTwistSpring:
                  robot,
                  EI: np.ndarray = None,
                  GJ: float = None):
-        """
-        Constructor to initialize a BendTwistSpring object.
-
-        :param nodes_edges_index: Indices of nodes and edges involved in bending/twisting.
-        :param signs: Signs associated with the bending/twisting.
-        :param kappa_bar: Reference curvature.
-        :param ref_twist: Reference twist.
-        :param robot: Object containing material properties.
-        :param optional_stiffnesses_EI: Optional bending stiffness values [EI1, EI2].
-        :param optional_stiffnesses_GJ: Optional torsional stiffness value.
-        """
         self.stiff_EI = EI or [robot.EI1, robot.EI2]
         self.stiff_GJ = GJ or robot.GJ
 

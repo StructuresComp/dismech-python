@@ -50,8 +50,10 @@ class TimeStepper:
             j_free = jacobian[np.ix_(free_idx, free_idx)]
 
             # Linear system solver
-            # dq_free = self._safe_solve(j_free, f_free)
-            dq_free = self._pardiso_solve(j_free, f_free)
+            if robot.sim_params.solver == 'np':  
+                dq_free = self._safe_solve(j_free, f_free)
+            else:
+                dq_free = self._pardiso_solve(j_free, f_free)
 
             # Adaptive damping and update
             alpha = self._adaptive_damping(alpha, iteration)

@@ -44,6 +44,7 @@ class SimParams:
     tol: float
     ftol: float
     dtol: float
+    solver: str = 'np'
 
 
 _TANGENT_THRESHOLD = 1e-10

@@ -64,10 +64,10 @@ def test_tangent_hexparachute_n6(softrobot_hexparachute_n6):
 
 def test_compute_space_parallel_cantilever_n51(softrobot_rod_cantilever_n51):
     robot = softrobot_rod_cantilever_n51
-    new_robot = robot.compute_space_parallel()
+    robot._compute_space_parallel()
     valid_data = scipy.io.loadmat(rel_path(
         'resources/rod_cantilever/rod_cantilever_n51_compute_space_parallel.mat'))
-    robot_helper(new_robot, valid_data['robot'])
+    robot_helper(robot, valid_data['robot'])
 
 
 def test_compute_time_parallel_cantilever_n51(softrobot_rod_cantilever_n51):

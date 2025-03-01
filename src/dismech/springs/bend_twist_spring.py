@@ -8,8 +8,8 @@ class BendTwistSpring:
                  kappa_bar: np.ndarray,
                  ref_twist: float,
                  robot,
-                 optional_stiffnesses_EI: np.ndarray = None,
-                 optional_stiffnesses_GJ: float = None):
+                 EI: np.ndarray = None,
+                 GJ: float = None):
         """
         Constructor to initialize a BendTwistSpring object.
 
@@ -21,10 +21,10 @@ class BendTwistSpring:
         :param optional_stiffnesses_EI: Optional bending stiffness values [EI1, EI2].
         :param optional_stiffnesses_GJ: Optional torsional stiffness value.
         """
-        self.stiff_EI = optional_stiffnesses_EI or [robot.EI1, robot.EI2]
-        self.stiff_GJ = optional_stiffnesses_GJ or robot.GJ
+        self.stiff_EI = EI or [robot.EI1, robot.EI2]
+        self.stiff_GJ = GJ or robot.GJ
 
-        # goes N e N e N
+        # N e N e N
         self.nodes_ind = [int(nodes_edges_index[0]), int(
             nodes_edges_index[2]), int(nodes_edges_index[4])]
         self.edges_ind = [int(nodes_edges_index[1]), int(nodes_edges_index[3])]
@@ -47,9 +47,3 @@ class BendTwistSpring:
         self.kappa_bar = kappa_bar
         self.ref_twist = ref_twist
         self.ref_twist_init = ref_twist
-
-        # Initialize force and Jacobian matrices
-        self.dFb = np.zeros(11)
-        self.dJb = np.zeros((11, 11))
-        self.dFt = np.zeros(11)
-        self.dJt = np.zeros((11, 11))

@@ -23,7 +23,7 @@ class HingeSpring:
                              e3,e4 point away from x1
     """
 
-    def __init__(self, indices, robot, kb=None):
+    def __init__(self, indices: np.ndarray, robot, kb: float = None):
         self.kb = kb or robot.kb
         self.nodes_ind = indices
         self.ind = np.concatenate([robot.map_node_to_dof(i)

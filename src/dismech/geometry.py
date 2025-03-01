@@ -14,7 +14,8 @@ class Geometry:
     Generate, save, and load custom node geometries
     """
 
-    def __init__(self, nodes: np.ndarray,
+    def __init__(self,
+                 nodes: np.ndarray,
                  edges: np.ndarray,
                  face_nodes: np.ndarray):
         """
@@ -22,7 +23,8 @@ class Geometry:
         """
         # save important params
         self.__nodes = nodes
-        self.__rod_shell_joint_edges, self.__rod_edges = self.__separate_joint_edges(face_nodes, edges)
+        self.__rod_shell_joint_edges, self.__rod_edges = self.__separate_joint_edges(
+            face_nodes, edges)
         self.__face_nodes = face_nodes
 
         # general counting
@@ -232,95 +234,78 @@ class Geometry:
 
     @staticmethod
     def from_txt(fname: str) -> "Geometry":
-        """
-        Reads from a .txt file and returns a Geometry object. Uses the same convention as the Matlab version.
-        """
+        """Reads from a .txt file and returns a Geometry object. Uses the same convention as the Matlab version."""
+
+        def process_temp_array(header_index):
+            """Converts temp_array to a NumPy array and adjusts for zero-based indexing if needed."""
+            if temp_array:
+                params[header_index] = np.array(
+                    temp_array, dtype=h_dtype[header_index])
+                if h_dtype[header_index] == GEOMETRY_INT:  # Convert to 0-based indexing
+                    params[header_index] -= 1
+                temp_array.clear()  # Reset for next header
+
+        # Validate file path
         if not os.path.exists(fname) or not os.path.isfile(fname):
-            raise ValueError('{} is not a valid path'.format(fname))
+            raise ValueError(f"{fname} is not a valid path")
 
         # Constants
-        valid_headers = {'*nodes': 0,
-                         '*rodedges': 1, '*triangles': 2}
-        h_len = [3, 2, 3]  # expected entry length
-        h_dtype = [GEOMETRY_FLOAT,
-                   GEOMETRY_INT, GEOMETRY_INT]
+        valid_headers = {'*nodes': 0, '*edges': 1, '*triangles': 2}
+        h_len = [3, 2, 3]  # Expected number of values per line
+        h_dtype = [GEOMETRY_FLOAT, GEOMETRY_INT, GEOMETRY_INT]
 
-        # Flags
-        h_flag = [False for _ in range(len(valid_headers))]  # list of flag
-        cur_h = -1  # tracks current header
-
+        # Flags & parameters
+        h_flag = [False] * len(valid_headers)
+        cur_h = -1  # Tracks current header
         params = [np.empty(0, dtype=np.float64)
-                  for _ in range(len(valid_headers))]  # initial arrays
-        temp_array = []  # temp linked list
+                  for _ in range(len(valid_headers))]
+        temp_array = []  # Temporary storage for values
 
         with open(fname, 'r') as f:
-            while (line := f.readline()) != '':
-                line = line[:-1]  # trim /n
+            for line in f:
+                line = line.strip()  # Trim whitespace and newlines
 
-                # * denotes header
-                if line[0] == "*":
-                    if (h_id := valid_headers.get(line.lower())) is None:
-                        raise ValueError('unknown header: {}'.format(line))
-
-                    # check and mark header
-                    if h_flag[h_id]:
-                        raise ValueError('{} header used twice'.format(line))
-                    h_flag[h_id] = True
-
-                    # add previous parameter
-                    if len(temp_array) > 0:
-                        params[cur_h] = np.array(
-                            temp_array, dtype=h_dtype[cur_h])
-
-                        # Python is 0 indexed
-                        if h_dtype[cur_h] == GEOMETRY_INT:
-                            params[cur_h] -= 1
-
-                        temp_array = []
-
-                    cur_h = h_id
-                # '#' is a comment
-                elif line[0] == "#":
+                # Skip comments and empty lines
+                if not line or line.startswith("#"):
                     continue
-                else:
-                    if len(vals := line.split(',')) != h_len[cur_h]:
+
+                if line.startswith("*"):  # Header line
+                    h_id = valid_headers.get(line.lower())
+                    if h_id is None:
+                        raise ValueError(f"Unknown header: {line}")
+                    if h_flag[h_id]:
+                        raise ValueError(f"{line} header used twice")
+
+                    process_temp_array(cur_h)  # Process previous header data
+
+                    h_flag[h_id] = True
+                    cur_h = h_id
+                else:  # Data line
+                    vals = line.split(",")
+                    if len(vals) != h_len[cur_h]:
                         raise ValueError(
-                            "{} should have {} values".format(vals, h_len[cur_h]))
+                            f"{vals} should have {h_len[cur_h]} values")
                     temp_array.append([float(val) for val in vals])
 
-        # add last parameter
-        if len(temp_array) > 0:
-            params[cur_h] = np.array(temp_array, dtype=h_dtype[cur_h])
-
-            # Python is 0 indexed
-            if h_dtype[cur_h] == GEOMETRY_INT:
-                params[cur_h] -= 1
+        process_temp_array(cur_h)  # Process last collected data
 
         return Geometry(*params)
-    
+
     @staticmethod
     def __separate_joint_edges(triangles: np.ndarray, edges: np.ndarray):
-        if not edges.size:
+        if edges.size == 0:
             return np.empty(0), np.empty(0)
-        
-        shell_nodes = np.unique(triangles)
-        is_joint_edge = np.isin(edges[:,0], shell_nodes) | np.isin(edges[:,1], shell_nodes)
 
+        shell_nodes = np.unique(triangles)
+        is_joint_edge = np.isin(edges[:, 0], shell_nodes) | np.isin(edges[:, 1], shell_nodes)
+        
         joint_edges = edges[is_joint_edge]
 
-        rod_shell_joint_edges = np.zeros_like(joint_edges)
-
-        for i in range(np.size(joint_edges, 0)):
-            n1, n2 = joint_edges[i]
-
-            # put the common node in 2nd column
-            if np.isin(n1, shell_nodes):
-                rod_shell_joint_edges[i] = [n2, n1]
-            else:
-                rod_shell_joint_edges[i] = [n1, n2]
+        rod_shell_joint_edges = np.copy(joint_edges)
+        mask = np.isin(joint_edges[:, 0], shell_nodes)
+        rod_shell_joint_edges[mask] = joint_edges[mask][:, ::-1]
 
         return rod_shell_joint_edges if rod_shell_joint_edges.size else np.empty(0), edges[~is_joint_edge]
-    # Read-only properties (direct analogs to createGeometry.m output)
 
     @property
     def nodes(self):

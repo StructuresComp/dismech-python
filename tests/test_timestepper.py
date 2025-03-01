@@ -27,7 +27,7 @@ def test_static_sim_shell_cantilever_n51(time_stepper_rod_cantilever_n51):
     qs = np.stack(qs)
 
     # Numerical stability
-    assert (np.allclose(qs, valid_data['qs'], rtol=1e-1))
+    assert (np.allclose(qs[:,robot.end_node_dof_index], valid_data['qs'][:,robot.end_node_dof_index]))
 
 
 def test_dynamic_sim_shell_cantilever_n40(time_stepper_shell_cantilever_n40):

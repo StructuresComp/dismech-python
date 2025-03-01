@@ -10,10 +10,12 @@ from .external_forces import compute_gravity_forces, compute_aerodynamic_forces_
 class TimeStepper:
 
     def __init__(self, robot: SoftRobot, fixed_nodes):
-        self.robot = robot.initialize(fixed_nodes)
+        self.robot = robot.fix_nodes(fixed_nodes)
         self.fixed_nodes = fixed_nodes
         self.epsilon = 1e-8  # Regularization parameter
         self.min_force = 1e-8  # Threshold for negligible forces
+
+        # TODO: Initialize energies
 
     def step(self, robot: SoftRobot = None, debug=False) -> SoftRobot:
         robot = robot or self.robot
@@ -127,7 +129,6 @@ class TimeStepper:
     def _safe_solve(self, J, F):
         if np.linalg.norm(F) < self.min_force:
             return np.zeros_like(F)
-
         return np.linalg.solve(J, F)
 
     def _adaptive_damping(self, alpha, iteration):

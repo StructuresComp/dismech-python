@@ -1,7 +1,7 @@
 # Meeting Notes
 
 ## 2-27-25
-- [ ] vectorize energy computations
+- [x] vectorize energy computations
 - [ ] abstract away inertial force (input: old DOF, velocity, acceleration)
 - [x] remove external force in different file than TimeStepper
 - [x] check about energy initialization

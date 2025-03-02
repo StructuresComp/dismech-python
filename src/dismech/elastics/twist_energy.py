@@ -1,7 +1,6 @@
 import numpy as np
 import typing
 
-from ..softrobot import SoftRobot
 from ..springs import BendTwistSpring
 from .elastic_energy import ElasticEnergy
 

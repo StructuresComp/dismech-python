@@ -2,7 +2,7 @@ import numpy as np
 import abc
 import typing
 
-from ..softrobot import SoftRobot
+from ..soft_robot import SoftRobot
 
 
 class ElasticEnergy(metaclass=abc.ABCMeta):

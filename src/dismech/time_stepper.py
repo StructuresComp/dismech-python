@@ -5,7 +5,7 @@ import numpy as np
 import pypardiso
 from scipy.sparse import csr_matrix
 
-from .softrobot import SoftRobot
+from .soft_robot import SoftRobot
 from .elastics import ElasticEnergy, StretchEnergy, HingeEnergy, BendEnergy, TwistEnergy
 from .external_forces import compute_gravity_forces, compute_aerodynamic_forces_vectorized
 

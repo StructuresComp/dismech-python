@@ -1,7 +1,7 @@
 import typing
 import numpy as np
 
-from ..softrobot import SoftRobot
+from ..soft_robot import SoftRobot
 
 
 def compute_aerodynamic_forces(robot: SoftRobot, q: np.ndarray, q0: np.ndarray) -> typing.Tuple[np.ndarray, np.ndarray]:

@@ -6,6 +6,6 @@
 - [x] remove external force in different file than TimeStepper
 - [x] check about energy initialization
 - [ ] boundary condition est functions (have time as input ? -- ABAQUS disp())
-- [ ]different types of integration schemes
+- [ ] different types of integration schemes
 - [x] pardiso ? (pip install)
-- [ ]beforeTimestep fn ?
+- [ ] beforeTimestep fn ?

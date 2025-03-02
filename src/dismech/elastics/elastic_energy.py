@@ -1,5 +1,6 @@
 import numpy as np
 import abc
+import typing
 
 from ..softrobot import SoftRobot
 
@@ -27,7 +28,7 @@ class ElasticEnergy(metaclass=abc.ABCMeta):
                                   m2: np.ndarray | None = None,
                                   ref_twist: np.ndarray | None = None):
         # stiffness (with discrete geometry considerations) : unit Nm (same unit as energy)
-        strain = self.get_strain(q)
+        strain = self.get_strain(q, m1, m2, ref_twist)
         del_strain = strain - self.natural_strain
 
         if isinstance(self.K, np.ndarray):  # rod bending
@@ -37,9 +38,12 @@ class ElasticEnergy(metaclass=abc.ABCMeta):
             Energy = 0.5 * del_strain**2
         return Energy
 
-    def grad_hess_energy_linear_elastic(self, q: np.ndarray):
-        strain = self.get_strain(q)
-        grad_strain, hess_strain = self.grad_hess_strain(q)
+    def grad_hess_energy_linear_elastic(self, q: np.ndarray,
+                                        m1: np.ndarray | None = None,
+                                        m2: np.ndarray | None = None,
+                                        ref_twist: np.ndarray | None = None) -> typing.Tuple[np.ndarray, np.ndarray]:
+        strain = self.get_strain(q, m1, m2, ref_twist)
+        grad_strain, hess_strain = self.grad_hess_strain(q, m1, m2, ref_twist)
 
         del_strain = strain - self.nat_strain
         gradE_strain = self.K * del_strain

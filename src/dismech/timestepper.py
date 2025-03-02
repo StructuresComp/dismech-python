@@ -6,7 +6,7 @@ from scipy.sparse import csr_matrix
 
 from . import fs
 from .softrobot import SoftRobot
-from .elastics import StretchEnergy
+from .elastics import StretchEnergy, HingeEnergy
 from .external_forces import compute_gravity_forces, compute_aerodynamic_forces_vectorized
 
 
@@ -18,8 +18,14 @@ class TimeStepper:
         self.epsilon = 1e-8  # Regularization parameter
         self.min_force = 1e-8  # Threshold for negligible forces
 
-        # TODO: Initialize energies
-        self.__stretch_energy = StretchEnergy(robot.stretch_springs)
+        # Initialize elastics
+        self.__elastic_energies = []
+        if robot.stretch_springs:
+            self.__elastic_energies.append(StretchEnergy(robot.stretch_springs))
+        if robot.hinge_springs:
+            self.__elastic_energies.append(HingeEnergy(robot.hinge_springs))
+
+        self.__energies = []
 
     def step(self, robot: SoftRobot = None, debug=False) -> SoftRobot:
         robot = robot or self.robot
@@ -33,8 +39,10 @@ class TimeStepper:
         alpha = 1.0
         iteration = 1
         err_history = []
+        solved = False
+        iteration_limit = False  # pull out for error
 
-        while True:
+        while not solved:
             # Compute forces and Jacobians
             forces, jacobian = self._compute_forces_and_jacobian(robot, q, q0)
 
@@ -52,7 +60,7 @@ class TimeStepper:
             j_free = jacobian[np.ix_(free_idx, free_idx)]
 
             # Linear system solver
-            if robot.sim_params.solver == 'np':  
+            if robot.sim_params.solver == 'np':
                 dq_free = self._safe_solve(j_free, f_free)
             else:
                 dq_free = self._pardiso_solve(j_free, f_free)
@@ -76,14 +84,16 @@ class TimeStepper:
             relative_converged = err < err_history[0] * params.ftol
             iteration_limit = iteration >= params.max_iter
 
-            if any([force_converged, relative_converged, disp_converged, iteration_limit]):
-                if iteration_limit:
-                    raise ValueError
-                break
+            solved = any([force_converged, relative_converged,
+                         disp_converged, iteration_limit])
             if debug:
                 print("iter: {}, error: {:.3f}".format(iteration, err))
 
             iteration += 1
+
+        if iteration_limit:
+            raise ValueError(
+                "Iteration limit {} reached before convergence".format(params.max_iter))
 
         # Final update and return
         self.robot = self._finalize_update(robot, q)
@@ -100,13 +110,6 @@ class TimeStepper:
         ref_twist = robot.compute_reference_twist(
             robot.bend_twist_springs, a1_iter, robot.compute_tangent(q), robot.ref_twist)
 
-        # Add stretch spring contributions
-        if robot.stretch_springs:
-            #Fs, Js = fs.get_fs_js_vectorized(robot, q)
-            Fs, Js = self.__stretch_energy.grad_hess_energy_linear_elastic(q)
-            forces += Fs
-            jacobian += Js
-
         # Add bend/twist contributions
         if robot.bend_twist_springs:
             Fb, Jb = fs.get_fb_jb_vectorized(robot, q, m1, m2)
@@ -118,10 +121,11 @@ class TimeStepper:
                 forces += Ft
                 jacobian += Jt
 
-        if robot.hinge_springs:
-            Fb, Jb = fs.get_fb_jb_shell_vectorized(robot, q)
-            forces += Fb
-            jacobian += Jb
+        # Add elastics
+        for energy in self.__elastic_energies:
+            F, J = energy.grad_hess_energy_linear_elastic(q, m1, m2, ref_twist)
+            forces += F
+            jacobian += J
 
         # Add gravity forces
         if "gravity" in robot.env.ext_force_list:
@@ -137,13 +141,13 @@ class TimeStepper:
         if np.linalg.norm(F) < self.min_force:
             return np.zeros_like(F)
         return np.linalg.solve(J, F)
-    
+
     def _pardiso_solve(self, J, F):
         """Pardiso solver (pypardiso)"""
         J_sparse = csr_matrix(J)
         if np.linalg.norm(F) < self.min_force:
             return np.zeros_like(F)
-        
+
         return pypardiso.spsolve(J_sparse, F)
 
     def _adaptive_damping(self, alpha, iteration):

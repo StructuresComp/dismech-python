@@ -1,12 +1,12 @@
 import copy
+import typing
 
 import numpy as np
 import pypardiso
 from scipy.sparse import csr_matrix
 
-from . import fs
 from .softrobot import SoftRobot
-from .elastics import StretchEnergy, HingeEnergy
+from .elastics import ElasticEnergy, StretchEnergy, HingeEnergy, BendEnergy, TwistEnergy
 from .external_forces import compute_gravity_forces, compute_aerodynamic_forces_vectorized
 
 
@@ -19,13 +19,18 @@ class TimeStepper:
         self.min_force = 1e-8  # Threshold for negligible forces
 
         # Initialize elastics
-        self.__elastic_energies = []
+        self.__elastic_energies: typing.List[ElasticEnergy] = []
         if robot.stretch_springs:
-            self.__elastic_energies.append(StretchEnergy(robot.stretch_springs))
+            self.__elastic_energies.append(
+                StretchEnergy(robot.stretch_springs))
         if robot.hinge_springs:
             self.__elastic_energies.append(HingeEnergy(robot.hinge_springs))
-
-        self.__energies = []
+        if robot.bend_twist_springs:
+            self.__elastic_energies.append(
+                BendEnergy(robot.bend_twist_springs))
+            if not robot.sim_params.two_d_sim:   # if 3d
+                self.__elastic_energies.append(
+                    TwistEnergy(robot.bend_twist_springs))
 
     def step(self, robot: SoftRobot = None, debug=False) -> SoftRobot:
         robot = robot or self.robot
@@ -40,7 +45,7 @@ class TimeStepper:
         iteration = 1
         err_history = []
         solved = False
-        iteration_limit = False  # pull out for error
+        iteration_limit = False
 
         while not solved:
             # Compute forces and Jacobians
@@ -61,31 +66,21 @@ class TimeStepper:
 
             # Linear system solver
             if robot.sim_params.solver == 'np':
-                dq_free = self._safe_solve(j_free, f_free)
-            else:
+                dq_free = self._np_solve(j_free, f_free)
+            elif robot.sim_params.solver == 'pardiso':
                 dq_free = self._pardiso_solve(j_free, f_free)
 
             # Adaptive damping and update
             alpha = self._adaptive_damping(alpha, iteration)
             q[free_idx] -= alpha * dq_free
 
-            # Convergence checks
+            # Error and convergence
             err = np.linalg.norm(f_free)
             err_history.append(err)
 
-            # Compute displacement increment
-            dq = np.zeros(robot.n_dof)
-            dq[free_idx] = alpha * dq_free
+            solved = self._converged(
+                err, err_history, alpha * dq_free, iteration, robot)
 
-            # Check all convergence criteria
-            disp_converged = np.max(np.abs(
-                dq[1:robot.end_node_dof_index])) / robot.sim_params.dt < robot.sim_params.dtol
-            force_converged = err < params.tol
-            relative_converged = err < err_history[0] * params.ftol
-            iteration_limit = iteration >= params.max_iter
-
-            solved = any([force_converged, relative_converged,
-                         disp_converged, iteration_limit])
             if debug:
                 print("iter: {}, error: {:.3f}".format(iteration, err))
 
@@ -110,24 +105,15 @@ class TimeStepper:
         ref_twist = robot.compute_reference_twist(
             robot.bend_twist_springs, a1_iter, robot.compute_tangent(q), robot.ref_twist)
 
-        # Add bend/twist contributions
-        if robot.bend_twist_springs:
-            Fb, Jb = fs.get_fb_jb_vectorized(robot, q, m1, m2)
-            # Fb, Jb = fs.get_fb_jb(robot, q, m1, m2)
-            forces += Fb
-            jacobian += Jb
-            if not robot.sim_params.two_d_sim:
-                Ft, Jt = fs.get_ft_jt_vectorized(robot, q, ref_twist)
-                forces += Ft
-                jacobian += Jt
-
-        # Add elastics
+        # Add elastic forces
         for energy in self.__elastic_energies:
-            F, J = energy.grad_hess_energy_linear_elastic(q, m1, m2, ref_twist)
+            F, J = energy.grad_hess_energy_linear_elastic(
+                q, **{'m1': m1, 'm2': m2, 'ref_twist': ref_twist})
             forces += F
             jacobian += J
 
-        # Add gravity forces
+        # Add external forces
+        # TODO: Make this also a list
         if "gravity" in robot.env.ext_force_list:
             forces += compute_gravity_forces(robot)
         if "aerodynamics" in robot.env.ext_force_list:
@@ -137,13 +123,27 @@ class TimeStepper:
 
         return forces, jacobian
 
-    def _safe_solve(self, J, F):
+    def _converged(self,
+                   err: float,
+                   err_history: typing.List[float],
+                   dq: np.ndarray,
+                   iteration: int,
+                   robot: SoftRobot):
+        """ Check all convergence criteria """
+        disp_converged = np.max(np.abs(
+            dq[1:robot.end_node_dof_index])) / robot.sim_params.dt < robot.sim_params.dtol
+        force_converged = err < robot.sim_params.tol
+        relative_converged = err < err_history[0] * robot.sim_params.ftol
+        iteration_limit = iteration >= robot.sim_params.max_iter
+
+        return any([force_converged, relative_converged, disp_converged, iteration_limit])
+
+    def _np_solve(self, J, F):
         if np.linalg.norm(F) < self.min_force:
             return np.zeros_like(F)
         return np.linalg.solve(J, F)
 
     def _pardiso_solve(self, J, F):
-        """Pardiso solver (pypardiso)"""
         J_sparse = csr_matrix(J)
         if np.linalg.norm(F) < self.min_force:
             return np.zeros_like(F)

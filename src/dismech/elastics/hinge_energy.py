@@ -16,7 +16,6 @@ class HingeEnergy(ElasticEnergy):
 
         N = len(springs)
 
-        # Pre-allocate all intermediate arrays
         # Edge vectors and norms
         self.m_e0 = np.empty((N, 3), dtype=np.float64)
         self.m_e1 = np.empty((N, 3), dtype=np.float64)
@@ -93,10 +92,7 @@ class HingeEnergy(ElasticEnergy):
 
         self.temp_block_3d = np.empty((N, 3, 3), dtype=np.float64)
 
-    def get_strain(self, q: np.ndarray,
-                   m1: np.ndarray | None = None,
-                   m2: np.ndarray | None = None,
-                   ref_twist: np.ndarray | None = None) -> np.ndarray:
+    def get_strain(self, q: np.ndarray, **kwargs) -> np.ndarray:
         n0p, n1p, n2p, n3p = self._get_node_pos(q)
         np.subtract(n1p, n0p, out=self.m_e0)
         np.subtract(n2p, n0p, out=self.m_e1)
@@ -104,7 +100,7 @@ class HingeEnergy(ElasticEnergy):
 
         self.cross_e0_e1[:] = np.cross(self.m_e0, self.m_e1)
         self.cross_e0_e2[:] = np.cross(
-            self.m_e2, self.m_e0)  # reusing space, wrong name
+            self.m_e2, self.m_e0)  # Reusing space, wrong name
 
         self.temp_block_2d[:] = np.cross(self.cross_e0_e1, self.cross_e0_e2)
 
@@ -118,10 +114,7 @@ class HingeEnergy(ElasticEnergy):
 
         return (angle * sign).squeeze(1)
 
-    def grad_hess_strain(self, q: np.ndarray,
-                         m1: np.ndarray | None = None,
-                         m2: np.ndarray | None = None,
-                         ref_twist: np.ndarray | None = None) -> typing.Tuple[np.ndarray, np.ndarray]:
+    def grad_hess_strain(self, q: np.ndarray, **kwargs) -> typing.Tuple[np.ndarray, np.ndarray]:
         n0p, n1p, n2p, n3p = self._get_node_pos(q)
 
         # Compute edges
@@ -219,7 +212,7 @@ class HingeEnergy(ElasticEnergy):
             np.einsum('ni,nj->nij', vec1, vec2, out=out)
             np.multiply(out, coefficient[..., None], out=out)
 
-        # Compute all M blocks
+        # Compute M blocks
         compute_block(self.m_cosA3/(self.m_h3**2),
                       self.m_m3, self.m_nn1, self.M331)
         compute_block(self.m_cosA3/(self.m_h3*self.m_h1),

@@ -602,9 +602,6 @@ class SoftRobot:
         self.__m1, self.__m2 = self.compute_material_directors(
             self.a1, self.a2, theta)
 
-        # Curvature computation
-        self._set_kappa(self.__m1, self.__m2)
-
         # Reference twist computation
         self.__undef_ref_twist = self.compute_reference_twist(
             self.bend_twist_springs, self.a1, self.tangent, np.zeros(
@@ -613,6 +610,12 @@ class SoftRobot:
         self.__ref_twist = self.compute_reference_twist(
             self.bend_twist_springs, self.a1, self.tangent, self.__undef_ref_twist
         )
+
+        # Set initial spring parameters
+        self._set_kappa(self.__m1, self.__m2)
+        for i, spring in enumerate(self.bend_twist_springs):
+            spring.undef_ref_twist = self.__undef_ref_twist[i]
+        # TODO: set theta_bar
 
         # empty fixed nodes
         self.__fixed_nodes = np.empty(0)

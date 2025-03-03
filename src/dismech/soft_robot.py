@@ -4,47 +4,13 @@ import typing
 
 import numpy as np
 
+from .state import RobotState
+from .stiffness import compute_rod_stiffness, compute_shell_stiffness
+from .frame_util import compute_reference_twist, parallel_transport
 from .environment import Environment
 from .geometry import Geometry
+from .params import GeomParams, Material, SimParams
 from .springs import BendTwistSpring, StretchSpring, HingeSpring
-
-
-@dataclasses.dataclass
-class GeomParams:
-    rod_r0: float
-    shell_h: float
-    axs: float = None
-    jxs: float = None
-    ixs1: float = None
-    ixs2: float = None
-
-
-@dataclasses.dataclass
-class Material:
-    density: float
-    youngs_rod: float
-    youngs_shell: float
-    poisson_rod: float
-    poisson_shell: float
-
-
-@dataclasses.dataclass
-class SimParams:
-    static_sim: bool
-    two_d_sim: bool
-    use_mid_edge: bool
-    use_line_search: bool
-    log_data: bool
-    log_step: int
-    show_floor: bool
-    dt: float
-    max_iter: int
-    total_time: float
-    plot_step: int
-    tol: float
-    ftol: float
-    dtol: float
-    solver: str = 'np'
 
 
 _TANGENT_THRESHOLD = 1e-10
@@ -54,16 +20,23 @@ class SoftRobot:
     def __init__(self, geom: GeomParams, material: Material,
                  geo: Geometry, sim_params: SimParams,
                  env: Environment):
+        # store mutable
         self.__sim_params = sim_params
         self.__env = env
 
-        # Store parameters as instance variables
-        self.__r0 = geom.rod_r0
-        self.__h = geom.shell_h
-        self.__rho = material.density
-        self.__nu_shell = material.poisson_shell
+        self._initialize_geometry(geo)
+        self._initialize_stiffness(geom, material)
+        self._initialize_reference_frame(geo)
+        self._initialize_directors_and_springs(geo)
+        self.__mass_matrix = self._get_mass_matrix(geom, material)
 
-        # Node and edge counts
+        # self.__edge_combos = self._construct_edge_combinations(
+        #    np.concatenate((geo.rod_edges, geo.rod_shell_joint_edges)
+        #                   ) if geo.rod_shell_joint_edges.size else geo.rod_edges
+        # )
+
+    def _initialize_geometry(self, geo: Geometry):
+        """Initialize geometry properties"""
         self.__n_nodes = geo.nodes.shape[0]
         self.__n_edges_rod_only = geo.rod_edges.shape[0]
         self.__n_edges_shell_only = geo.shell_edges.shape[0]
@@ -72,7 +45,6 @@ class SoftRobot:
         self.__n_edges_dof = self.__n_edges_rod_only + n_edges_joint
         self.__n_faces = geo.face_nodes.shape[0] if geo.face_nodes.size else 0
 
-        # Geometry data
         self.__nodes = geo.nodes
         self.__edges = geo.edges
         self.__face_nodes_shell = geo.face_nodes
@@ -81,43 +53,20 @@ class SoftRobot:
         # Initialize DOF vector
         self.__n_dof = 3 * self.__n_nodes + self.__n_edges_dof
         self.__q0 = np.zeros(self.__n_dof)
-        self.__q0[:3 * self.__n_nodes] = geo.nodes.flatten()
+        self.__q0[:3 * self.__n_nodes] = self.__nodes.flatten()
         self.__q0[3 * self.__n_nodes:3 * self.__n_nodes +
                   self.__n_edges_dof] = self.__twist_angles
 
-        if sim_params.use_mid_edge:
+        # Midedge bending has more DOF
+        if self.__sim_params.use_mid_edge:
             self.__n_dof += self.__n_edges_shell_only
             self.__q0 = np.concatenate(
                 (self.__q0, np.zeros(self.__n_edges_shell_only)))
 
-        self.__q = self.__q0.copy()
-        self.__u = np.zeros_like(self.__q0)
-        self.__a = np.zeros_like(self.__q0)
-
-        # Precompute reference metrics
         self.__ref_len = self._get_ref_len()
         self.__voronoi_ref_len = self._get_voronoi_ref_len()
         self.__voronoi_area = self._get_voronoi_area()
         self.__face_area = self._get_face_area()
-
-        # Mass matrix and stiffness properties
-        self.__mass_matrix = self._get_mass_matrix(geom)
-        self.__EA, self.__EI1, self.__EI2, self.__GJ = self._compute_stiffness(
-            geom, material)
-        self.__ks, self.__kb = self._compute_shell_stiffness(material)
-
-        # Initialize directors and springs
-        self._initialize_directors_and_springs(geo)
-
-        # Initialize reference frame
-        self._initialize_reference_frame()
-
-    @staticmethod
-    def map_node_to_dof(node_nums: typing.Union[int, np.ndarray]) -> np.ndarray:
-        return (3 * np.asarray(node_nums))[..., None] + np.array([0, 1, 2])
-
-    def map_edge_to_dof(self, edge_nums: typing.Union[int, np.ndarray]) -> np.ndarray:
-        return 3 * self.__n_nodes + np.asarray(edge_nums)
 
     def _get_ref_len(self) -> np.ndarray:
         vectors = self.__nodes[self.__edges[:, 1]] - \
@@ -154,7 +103,14 @@ class SoftRobot:
         cross = np.cross(v1, v2)
         return 0.5 * np.linalg.norm(cross, axis=1)
 
-    def _get_mass_matrix(self, geom: GeomParams) -> np.ndarray:
+    def _initialize_stiffness(self, geom: GeomParams, material: Material):
+        """Initialize global stiffness properties"""
+        self.__EA, self.__EI1, self.__EI2, self.__GJ = compute_rod_stiffness(
+            geom, material)
+        self.__ks, self.__kb = compute_shell_stiffness(
+            geom, material, self.ref_len, self.sim_params.use_mid_edge)
+
+    def _get_mass_matrix(self, geom: GeomParams, material: Material) -> np.ndarray:
         mass = np.zeros(self.__n_dof)
 
         # Shell face contributions
@@ -163,17 +119,17 @@ class SoftRobot:
             v1 = self.__nodes[faces[:, 1]] - self.__nodes[faces[:, 0]]
             v2 = self.__nodes[faces[:, 2]] - self.__nodes[faces[:, 1]]
             areas = 0.5 * np.linalg.norm(np.cross(v1, v2), axis=1)
-            m_shell = self.__rho * areas * self.__h
+            m_shell = material.density * areas * geom.shell_h
             dof_indices = (3 * faces[:, :, None] + np.arange(3)).reshape(-1)
             np.add.at(mass, dof_indices, np.repeat(m_shell / 3, 9))
 
-        # Rod node contributions
+        # Node contributions
         if self.__n_nodes:
             if geom.axs is not None:
-                dm_nodes = self.__voronoi_ref_len * geom.axs * self.__rho
+                dm_nodes = self.__voronoi_ref_len * geom.axs * material.density
             else:
                 dm_nodes = self.__voronoi_ref_len * \
-                    np.pi * (self.__r0 ** 2) * self.__rho
+                    np.pi * (geom.rod_r0 ** 2) * material.density
             node_dofs = np.arange(3 * self.__n_nodes).reshape(-1, 3)
             mass[node_dofs] += dm_nodes[:, None]
 
@@ -181,67 +137,58 @@ class SoftRobot:
         if self.__n_edges_dof:
             if geom.axs is not None:
                 dm_edges = self.__ref_len[:self.__n_edges_dof] * \
-                    geom.axs * self.__rho
+                    geom.axs * material.density
             else:
                 dm_edges = self.__ref_len[:self.__n_edges_dof] * \
-                    np.pi * (self.__r0 ** 2) * self.__rho
-            edge_mass = dm_edges / 2 * (self.__r0 ** 2)
+                    np.pi * (geom.rod_r0 ** 2) * material.density
+            edge_mass = dm_edges / 2 * (geom.rod_r0 ** 2)
             edge_dofs = 3 * self.__n_nodes + np.arange(self.__n_edges_dof)
             mass[edge_dofs] = edge_mass
 
         return np.diag(mass)
 
+    @staticmethod
+    def map_node_to_dof(node_nums: typing.Union[int, np.ndarray]) -> np.ndarray:
+        return (3 * np.asarray(node_nums))[..., None] + np.array([0, 1, 2])
+
+    def map_edge_to_dof(self, edge_nums: typing.Union[int, np.ndarray]) -> np.ndarray:
+        return 3 * self.__n_nodes + np.asarray(edge_nums)
+
     def scale_mass_matrix(self, nodes: int | np.ndarray, scale: float):
         self.__mass_matrix[np.ix_(self.map_node_to_dof(
             nodes), self.map_node_to_dof(nodes))] *= scale
 
-    def _compute_stiffness(self, geom: GeomParams, material: Material) -> typing.Tuple[float, ...]:
-        axs = geom.axs if geom.axs is not None else np.pi * self.__r0 ** 2
-        EA = material.youngs_rod * axs
+    def _initialize_reference_frame(self, geo: Geometry):
+        a1, a2 = self.compute_space_parallel()
+        m1, m2 = self.compute_material_directors(self.q0, a1, a2)
 
-        if geom.ixs1 and geom.ixs2:
-            EI1 = material.youngs_rod * geom.ixs1
-            EI2 = material.youngs_rod * geom.ixs2
+        edges = np.array([(s[1], s[3])
+                         for s in geo.bend_twist_springs], dtype=np.int64)
+        sign = np.array([sign for sign in geo.bend_twist_signs])
+
+        if edges.size:
+            self.__undef_ref_twist = compute_reference_twist(
+                edges, sign, a1, self.__tangent, np.zeros(sign.shape[0]))
+            ref_twist = compute_reference_twist(
+                edges, sign, a1, self.__tangent, self.__undef_ref_twist
+            )
         else:
-            EI1 = EI2 = material.youngs_rod * np.pi * self.__r0 ** 4 / 4
+            self.__undef_ref_twist = np.array([])
+            ref_twist = np.array([])
 
-        G_rod = material.youngs_rod / (2 * (1 + material.poisson_rod))
+        self.__state = RobotState.init(self.__q0, a1, a2, m1, m2, ref_twist)
 
-        if geom.jxs:
-            GJ = G_rod * geom.jxs
-        else:
-            GJ = G_rod * np.pi * self.__r0 ** 4 / 2
+        # everything starts as free
+        self.__fixed_nodes = np.array([], dtype=np.int64)
+        self.__fixed_edges = np.array([], dtype=np.int64)
 
-        return EA, EI1, EI2, GJ
-
-    def _compute_shell_stiffness(self, material: Material) -> typing.Tuple[float, float]:
-        if self.__sim_params.use_mid_edge:
-            kb = material.youngs_shell * self.__h ** 3 / \
-                (24 * (1 - self.__nu_shell ** 2))
-            ks = 2 * material.youngs_shell * self.__h / \
-                (1 - self.__nu_shell ** 2) * self.__ref_len
-        else:
-            ks = (3 ** 0.5 / 2) * material.youngs_shell * \
-                self.__h * self.__ref_len
-            kb = (2 / (3 ** 0.5)) * material.youngs_shell * \
-                (self.__h ** 3) / 12
-        return ks, kb
+        self.__fixed_dof, self.__free_dof = self._find_fixed_free_dof(
+            self.__fixed_nodes, self.__fixed_edges)
 
     def _initialize_directors_and_springs(self, geo: Geometry):
-        # Initialize edge combinations for contact (simplified)
-        self.__edge_combos = self._construct_edge_combinations(
-            np.concatenate((geo.rod_edges, geo.rod_shell_joint_edges)
-                           ) if geo.rod_shell_joint_edges.size else geo.rod_edges
-        )
-
-        # Initialize directors and reference frames
-        self.__a1 = np.zeros((self.__n_edges_dof, 3))
-        self.__a2 = np.zeros((self.__n_edges_dof, 3))
-        self.__m1 = np.zeros((self.__n_edges_dof, 3))
-        self.__m2 = np.zeros((self.__n_edges_dof, 3))
-
-        # Initialize springs
         n_rod = geo.rod_stretch_springs.shape[0]
+
+        # Stretch springs
         rod_springs = [StretchSpring(spring, self.ref_len[i], self)
                        for i, spring in enumerate(geo.rod_stretch_springs)]
         shell_springs = [StretchSpring(spring, self.ref_len[i + n_rod], self, self.__ks[i + n_rod])
@@ -254,9 +201,18 @@ class SoftRobot:
             for spring, sign in zip(geo.bend_twist_springs, geo.bend_twist_signs)
         ]
 
-        self.__hinge_springs = [
+        # Hinge springs
+        self.__shell_hinge_springs = [
             HingeSpring(spring, self) for spring in geo.hinges
         ]
+
+        # Set initial spring parameters
+        self._set_kappa(self.state.m1, self.state.m2)
+        for i, spring in enumerate(self.bend_twist_springs):
+            spring.undef_ref_twist = self.__undef_ref_twist[i]
+        # TODO: set theta_bar
+
+        # Mid-edge?
 
     @staticmethod
     def _construct_edge_combinations(edges: np.ndarray) -> np.ndarray:
@@ -276,9 +232,9 @@ class SoftRobot:
         signs = self.__sign_faces
 
         # Vectorize face processing
-        all_p_is = self.__q[3 * faces].reshape(-1, 3, 3)
-        all_xi_is = self.__q[3*self.__n_nodes + face_edges]
-        tau_0 = self._update_pre_comp_shell(self.__q)
+        all_p_is = self.__q0[3 * faces].reshape(-1, 3, 3)
+        all_xi_is = self.__q0[3*self.__n_nodes + face_edges]
+        tau_0 = self._update_pre_comp_shell(self.__q0)
         all_tau0_is = tau_0[:, face_edges].transpose(1, 0, 2)
 
         # Compute t, f, c for all faces simultaneously
@@ -335,9 +291,9 @@ class SoftRobot:
         n0_dofs = 3 * nodes_ind[:, 0]
         n1_dofs = 3 * nodes_ind[:, 1]
         n2_dofs = 3 * nodes_ind[:, 2]
-        n0_pos = self.__q[n0_dofs[:, None] + np.arange(3)]
-        n1_pos = self.__q[n1_dofs[:, None] + np.arange(3)]
-        n2_pos = self.__q[n2_dofs[:, None] + np.arange(3)]
+        n0_pos = self.__q0[n0_dofs[:, None] + np.arange(3)]
+        n1_pos = self.__q0[n1_dofs[:, None] + np.arange(3)]
+        n2_pos = self.__q0[n2_dofs[:, None] + np.arange(3)]
 
         # Compute tangents and curvature
         t0 = (n1_pos - n0_pos) / \
@@ -360,6 +316,14 @@ class SoftRobot:
         for i, spring in enumerate(self.__bend_twist_springs):
             spring.kappa_bar = np.array([kappa1[i], kappa2[i]])
 
+    def compute_material_directors(self, q: np.ndarray, a1: np.ndarray, a2: np.ndarray) -> typing.Tuple[np.ndarray, np.ndarray]:
+        theta = self.get_theta(q)
+        cos_theta = np.cos(theta)[:, None]
+        sin_theta = np.sin(theta)[:, None]
+        m1 = cos_theta * a1 + sin_theta * a2
+        m2 = -sin_theta * a1 + cos_theta * a2
+        return m1, m2
+
     @staticmethod
     def compute_reference_twist(springs: typing.List[BendTwistSpring],
                                 a1: np.ndarray, tangent: np.ndarray,
@@ -370,123 +334,7 @@ class SoftRobot:
         edges = np.array([s.edges_ind for s in springs])
         sgn = np.array([s.sgn for s in springs])
 
-        e0 = edges[:, 0]
-        e1 = edges[:, 1]
-        t0 = tangent[e0] * sgn[:, 0][:, None]
-        t1 = tangent[e1] * sgn[:, 1][:, None]
-        u0 = a1[e0]
-        u1 = a1[e1]
-
-        # Batch parallel transport
-        ut = SoftRobot._parallel_transport(u0, t0, t1)
-        ut = SoftRobot._rotate_axis_angle(ut, t1, ref_twist)
-
-        # Compute signed angles in bulk
-        angles = SoftRobot._signed_angle(ut, u1, t1)
-        return ref_twist + angles
-
-    @staticmethod
-    def _parallel_transport(u: np.ndarray, t_start: np.ndarray, t_end: np.ndarray) -> np.ndarray:
-        # Determine if inputs are batched and ensure 2D arrays
-        batched = t_start.ndim > 1
-        if not batched:
-            u = np.expand_dims(u, axis=0)
-            t_start = np.expand_dims(t_start, axis=0)
-            t_end = np.expand_dims(t_end, axis=0)
-
-        # Compute cross product and its norm
-        b = np.cross(t_start, t_end)
-        b_norm = np.linalg.norm(b, axis=1, keepdims=True)
-        mask = b_norm.squeeze(axis=1) < 1e-10
-
-        # Safe normalization of cross product
-        safe_b_norm = np.where(b_norm < 1e-10, 1.0, b_norm)
-        b_normalized = b / safe_b_norm
-
-        # Orthogonalize against t_start
-        dot_prod = np.einsum('ij,ij->i', b_normalized, t_start)
-        b_ortho = b_normalized - dot_prod[:, np.newaxis] * t_start
-
-        # Safe renormalization
-        b_ortho_norm = np.linalg.norm(b_ortho, axis=1, keepdims=True)
-        safe_b_ortho_norm = np.where(b_ortho_norm < 1e-10, 1.0, b_ortho_norm)
-        b_ortho_normalized = b_ortho / safe_b_ortho_norm
-
-        # Compute transport bases
-        n1 = np.cross(t_start, b_ortho_normalized)
-        n2 = np.cross(t_end, b_ortho_normalized)
-
-        # Project u onto components and transport
-        components = (
-            np.einsum('ij,ij->i', u, t_start)[:, np.newaxis] * t_end +
-            np.einsum('ij,ij->i', u, n1)[:, np.newaxis] * n2 +
-            np.einsum('ij,ij->i', u,
-                      b_ortho_normalized)[:, np.newaxis] * b_ortho_normalized
-        )
-
-        # Preserve original vectors where transport is unnecessary
-        result = np.where(mask[:, np.newaxis], u, components)
-
-        # Remove batch dimension if input was non-batched
-        if not batched:
-            result = result.squeeze(axis=0)
-
-        return result
-
-    @staticmethod
-    def _rotate_axis_angle(v: np.ndarray, axis: np.ndarray, theta: np.ndarray) -> np.ndarray:
-        # Ensure inputs are at least 2D for batched processing
-        batched = v.ndim > 1
-        if not batched:
-            v = np.expand_dims(v, axis=0)
-            axis = np.expand_dims(axis, axis=0)
-            theta = np.expand_dims(theta, axis=0)
-
-        # Compute rotation components
-        cos_theta = np.cos(theta)[:, None]
-        sin_theta = np.sin(theta)[:, None]
-        dot_product = np.einsum('ij,ij->i', axis, v)[:, None]
-
-        # Apply rotation formula
-        rotated_v = (
-            cos_theta * v +
-            sin_theta * np.cross(axis, v) +
-            (1 - cos_theta) * dot_product * axis
-        )
-
-        # Remove batch dimension if input was non-batched
-        if not batched:
-            rotated_v = rotated_v.squeeze(axis=0)
-
-        return rotated_v
-
-    @staticmethod
-    def _signed_angle(u: np.ndarray, v: np.ndarray, n: np.ndarray) -> np.ndarray:
-        # Ensure inputs are at least 2D for batched processing
-        batched = u.ndim > 1
-        if not batched:
-            u = np.expand_dims(u, axis=0)
-            v = np.expand_dims(v, axis=0)
-            n = np.expand_dims(n, axis=0)
-
-        # Compute cross product and its norm
-        w = np.cross(u, v)
-        norm_w = np.linalg.norm(w, axis=-1, keepdims=False)
-
-        # Compute dot product and handle near-zero denominators
-        dot_uv = np.einsum('...i,...i', u, v)
-        safe_denominator = np.where(np.abs(dot_uv) < 1e-10, 1.0, dot_uv)
-        angle = np.arctan2(norm_w, safe_denominator)
-
-        # Compute sign using the normal vector
-        sign = np.sign(np.einsum('...i,...i', n, w))
-
-        # Remove batch dimension if input was non-batched
-        if not batched:
-            angle = angle.squeeze(axis=0)
-            sign = sign.squeeze(axis=0)
-
-        return angle * sign
+        return compute_reference_twist(edges, sgn, a1, tangent, ref_twist)
 
     def _update_pre_comp_shell(self, q: np.ndarray) -> np.ndarray:
         faces = self.__face_nodes_shell
@@ -511,61 +359,51 @@ class SoftRobot:
         tau_0 /= np.linalg.norm(tau_0, axis=1, keepdims=True)
         return tau_0.T
 
-    def _compute_space_parallel(self):
-        ret = copy.deepcopy(self)
-        self.__tangent = self.compute_tangent(ret.__q0)
+    def compute_space_parallel(self) -> typing.Tuple[np.ndarray, np.ndarray]:
+        a1 = np.zeros((self.__n_edges_dof, 3))
+        a2 = np.zeros((self.__n_edges_dof, 3))
 
-        if not self.__tangent.size:
-            return
+        self.__tangent = self.compute_tangent(self.__q0)
 
-        # Initialize first a1
-        t0 = self.__tangent[0]
-        rand_vec = np.array([0, 1, 0])
-        a1_init = np.cross(t0, rand_vec)
-        if np.linalg.norm(a1_init) < 1e-6:
-            rand_vec = np.array([0, 0, -1])
-            a1_init = np.cross(t0, rand_vec)
-        self.__a1[0] = a1_init / np.linalg.norm(a1_init)
-        self.__a2[0] = np.cross(self.__tangent[0], self.__a1[0])
+        if self.__tangent.size:
+            # Initialize first a1
+            a1_init = np.cross(self.__tangent[0], np.array([0, 1, 0]))
+            if np.linalg.norm(a1_init) < 1e-6:
+                a1_init = np.cross(self.__tangent[0], np.array([0, 0, -1]))
+            a1[0] = a1_init / np.linalg.norm(a1_init)
+            a2[0] = np.cross(self.__tangent[0], a1[0])
 
-        # Iterative parallel transport (depends on previous a1)
-        for i in range(1, self.__n_edges_dof):
-            t_prev = self.__tangent[i-1]
-            t_curr = self.__tangent[i]
-            a1_prev = self.__a1[i-1]
+            # Iterative parallel transport (depends on previous a1)
+            for i in range(1, self.__n_edges_dof):
+                t_prev = self.__tangent[i-1]
+                t_curr = self.__tangent[i]
+                a1_prev = a1[i-1]
 
-            self.__a1[i] = self._parallel_transport(a1_prev, t_prev, t_curr)
-            self.__a1[i] -= np.dot(self.__a1[i], t_curr) * t_curr
-            self.__a1[i] /= np.linalg.norm(self.__a1[i])
-            self.__a2[i] = np.cross(t_curr, self.__a1[i])
+                a1[i] = parallel_transport(a1_prev, t_prev, t_curr)
+                a1[i] -= np.dot(a1[i], t_curr) * t_curr
+                a1[i] /= np.linalg.norm(a1[i])
+                a2[i] = np.cross(t_curr, a1[i])
+        return a1, a2
 
     def compute_tangent(self, q: np.ndarray) -> np.ndarray:
         edges = self.__edges[:self.__n_edges_dof]
         n0 = edges[:, 0]
         n1 = edges[:, 1]
-        pos0 = q.flatten()[self.map_node_to_dof(n0)]  # shape (n_edges_dof, 3)
-        pos1 = q.flatten()[self.map_node_to_dof(n1)]  # shape (n_edges_dof, 3)
+        pos0 = q.flatten()[self.map_node_to_dof(n0)]
+        pos1 = q.flatten()[self.map_node_to_dof(n1)]
         vecs = pos1 - pos0
         norms = np.linalg.norm(vecs, axis=1, keepdims=True)
-        norms = np.where(norms < 1e-10, 1.0, norms)  # prevent division by zero
+        norms = np.where(norms < 1e-10, 1.0, norms)
         tangent = vecs / norms
         tangent[np.abs(tangent) < _TANGENT_THRESHOLD] = 0
 
         return tangent
 
-    @staticmethod
-    def compute_material_directors(a1: np.ndarray, a2: np.ndarray, theta: np.ndarray) -> typing.Tuple[np.ndarray, np.ndarray]:
-        cos_theta = np.cos(theta)[:, None]
-        sin_theta = np.sin(theta)[:, None]
-        m1 = cos_theta * a1 + sin_theta * a2
-        m2 = -sin_theta * a1 + cos_theta * a2
-        return m1, m2
-
     def compute_time_parallel(self, a1_old: np.ndarray, q0: np.ndarray, q: np.ndarray) -> typing.Tuple[np.ndarray, np.ndarray]:
         tangent0 = self.compute_tangent(q0)
         tangent = self.compute_tangent(q)
 
-        a1_transported = self._parallel_transport(
+        a1_transported = parallel_transport(
             a1_old, tangent0, tangent)
 
         # Orthonormalization
@@ -593,35 +431,6 @@ class SoftRobot:
         free_dof = np.setdiff1d(all_dofs, fixed_dof, assume_unique=True)
 
         return fixed_dof, free_dof
-
-    def _initialize_reference_frame(self) -> "SoftRobot":
-        self._compute_space_parallel()
-
-        # Material frame computation
-        self.__m1, self.__m2 = self.compute_material_directors(
-            self.a1, self.a2, self.get_theta(self.q0))
-
-        # Reference twist computation
-        self.__undef_ref_twist = self.compute_reference_twist(
-            self.bend_twist_springs, self.a1, self.__tangent, np.zeros(
-                len(self.__bend_twist_springs))
-        )
-        self.__ref_twist = self.compute_reference_twist(
-            self.bend_twist_springs, self.a1, self.__tangent, self.__undef_ref_twist
-        )
-
-        # Set initial spring parameters
-        self._set_kappa(self.__m1, self.__m2)
-        for i, spring in enumerate(self.bend_twist_springs):
-            spring.undef_ref_twist = self.__undef_ref_twist[i]
-        # TODO: set theta_bar
-
-        # everything starts as free
-        self.__fixed_nodes = np.array([], dtype=np.int64)
-        self.__fixed_edges = np.array([], dtype=np.int64)
-
-        self.__fixed_dof, self.__free_dof = self._find_fixed_free_dof(
-            self.__fixed_nodes, self.__fixed_edges)
 
     def _get_fixed_edges(self, fixed_nodes: np.ndarray) -> np.ndarray:
         # Add edges in between fixed nodes
@@ -657,32 +466,12 @@ class SoftRobot:
             ret.__fixed_nodes, ret.__fixed_edges)
         return ret
 
-    def update(self,
-               q: np.ndarray,
-               u: np.ndarray = None,
-               a: np.ndarray = None,
-               a1: np.ndarray = None,
-               a2: np.ndarray = None,
-               m1: np.ndarray = None,
-               m2: np.ndarray = None,
-               ref_twist: np.ndarray = None) -> "SoftRobot":
-        ret = copy.copy(self)
-        ret.__q = q.copy()
-        if u is not None:
-            ret.__u = u.copy()
-        if u is not None:
-            ret.__a = a.copy()
-        if a1 is not None:
-            ret.__a1 = a1.copy()
-        if a2 is not None:
-            ret.__a2 = a2.copy()
-        if m1 is not None:
-            ret.__m1 = m1.copy()
-        if m2 is not None:
-            ret.__m2 = m2.copy()
-        if ref_twist is not None:
-            ret.__ref_twist = ref_twist.copy()
-        return ret
+    def update(self, **kwargs) -> "SoftRobot":
+        """Return a new SoftRobot with updated state"""
+        new_robot = copy.copy(self)
+        new_robot.__state = dataclasses.replace(
+            self.__state, **{k: v.copy() for k, v in kwargs.items()})
+        return new_robot
 
     def get_theta(self, q: np.ndarray) -> np.ndarray:
         """ All DOF for edges (self.__n_edges_dof,)"""
@@ -709,29 +498,9 @@ class SoftRobot:
         return self.__q0.view()
 
     @property
-    def q(self) -> np.ndarray:
-        """Current state vector (n_dof,)"""
-        return self.__q.view()
-
-    @property
-    def u(self) -> np.ndarray:
-        """Current velocity vector (n_dof,)"""
-        return self.__u.view()
-
-    @property
-    def a(self) -> np.ndarray:
-        """Current acceleration vector (n_dof,)"""
-        return self.__a.view()
-
-    @property
-    def a1(self) -> np.ndarray:
-        """First reference frame directors (n_edges_dof, 3)"""
-        return self.__a1.view()
-
-    @property
-    def a2(self) -> np.ndarray:
-        """Second reference frame directors (n_edges_dof, 3)"""
-        return self.__a2.view()
+    def state(self) -> RobotState:
+        """Return current state"""
+        return self.__state
 
     @property
     def bend_twist_springs(self) -> typing.List[BendTwistSpring]:
@@ -746,7 +515,7 @@ class SoftRobot:
     @property
     def hinge_springs(self) -> typing.List[HingeSpring]:
         """List of hinge spring elements"""
-        return self.__hinge_springs
+        return self.__shell_hinge_springs
 
     @property
     def edges(self) -> np.ndarray:

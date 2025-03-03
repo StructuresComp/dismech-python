@@ -38,9 +38,9 @@ class TimeStepper(metaclass=abc.ABCMeta):
         self._solver = _SOLVERS.get(robot.sim_params.solver, NumpySolver)()
 
         # Preallocate matrices
-        self._forces = np.empty_like(self.robot.q, dtype=dtype)
+        self._forces = np.empty_like(self.robot.state.q, dtype=dtype)
         self._jacobian = np.empty(
-            (self.robot.q.shape[0], self.robot.q.shape[0]), dtype=dtype)
+            (self.robot.state.q.shape[0], self.robot.state.q.shape[0]), dtype=dtype)
         self._f_free = np.empty_like(self.robot.free_dof, dtype=dtype)
         self._j_free = np.empty(
             (self.robot.free_dof.shape[0], self.robot.free_dof.shape[0]), dtype=dtype)
@@ -66,7 +66,7 @@ class TimeStepper(metaclass=abc.ABCMeta):
         robot = robot or self.robot
 
         # Initialize iteration variables
-        q = copy.deepcopy(robot.q)
+        q = copy.deepcopy(robot.state.q)
         alpha = 1.0
         iteration = 1
         err_history = []
@@ -75,7 +75,7 @@ class TimeStepper(metaclass=abc.ABCMeta):
 
         while not solved:
             # Updates private variables
-            self._compute_forces_and_jacobian(robot, q, robot.q.view())
+            self._compute_forces_and_jacobian(robot, q, robot.state.q)
 
             # Inertial force vs equilibrium
             if robot.sim_params.static_sim:
@@ -117,7 +117,7 @@ class TimeStepper(metaclass=abc.ABCMeta):
 
         if iteration_limit:
             raise ValueError(
-                "Iteration limit {} reached before convergence".format(params.max_iter))
+                "Iteration limit {} reached before convergence".format(robot.sim_params.max_iter))
 
         # Final update and return
         self.robot = self._finalize_update(robot, q)
@@ -136,11 +136,10 @@ class TimeStepper(metaclass=abc.ABCMeta):
         self._jacobian[:].fill(0.0)
 
         # Compute reference frames and material directors
-        a1_iter, a2_iter = robot.compute_time_parallel(robot.a1, q0, q)
-        theta = robot.get_theta(q)
-        m1, m2 = robot.compute_material_directors(a1_iter, a2_iter, theta)
+        a1_iter, a2_iter = robot.compute_time_parallel(robot.state.a1, q0, q)
+        m1, m2 = robot.compute_material_directors(q, a1_iter, a2_iter)
         ref_twist = robot.compute_reference_twist(
-            robot.bend_twist_springs, a1_iter, robot.compute_tangent(q), robot.ref_twist)
+            robot.bend_twist_springs, a1_iter, robot.compute_tangent(q), robot.state.ref_twist)
 
         # Add elastic forces
         for energy in self.__elastic_energies:
@@ -180,13 +179,10 @@ class TimeStepper(metaclass=abc.ABCMeta):
         return max(alpha * 0.9, 0.1)
 
     def _finalize_update(self, robot: SoftRobot, q):
-        u = (q - robot.q) / robot.sim_params.dt
+        u = (q - robot.state.q) / robot.sim_params.dt
         a = self._compute_acceleration(robot, q)
-        a1, a2 = robot.compute_time_parallel(robot.a1, robot.q, q)
-
-        return robot.update(
-            q, u, a, a1, a2,
-            *robot.compute_material_directors(a1, a2, robot.get_theta(q)),
-            robot.compute_reference_twist(
-                robot.bend_twist_springs, a1, robot.compute_tangent(q), robot.ref_twist)
-        )
+        a1, a2 = robot.compute_time_parallel(robot.state.a1, robot.state.q, q)
+        m1, m2 = robot.compute_material_directors(q, a1, a2)
+        ref_twist = robot.compute_reference_twist(
+            robot.bend_twist_springs, a1, robot.compute_tangent(q), robot.state.ref_twist)
+        return robot.update(q=q, u=u, a=a, a1=a1, a2=a2, m1=m1, m2=m2, ref_twist=ref_twist)

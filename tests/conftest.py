@@ -96,9 +96,9 @@ def time_stepper_contortion_n21(softrobot_contortion_n21):
     end = 0.09
 
     end_points = np.array(np.where(
-        softrobot_contortion_n21.q[softrobot_contortion_n21.node_dof_indices].reshape(-1, 3)[:, 0] >= end)[0])
+        softrobot_contortion_n21.state.q[softrobot_contortion_n21.node_dof_indices].reshape(-1, 3)[:, 0] >= end)[0])
     start_points = np.array(np.where(
-        softrobot_contortion_n21.q[softrobot_contortion_n21.node_dof_indices].reshape(-1, 3)[:, 0] <= start)[0])
+        softrobot_contortion_n21.state.q[softrobot_contortion_n21.node_dof_indices].reshape(-1, 3)[:, 0] <= start)[0])
 
     robot = softrobot_contortion_n21.fix_nodes(
         np.concat((start_points, end_points)))
@@ -135,7 +135,7 @@ def softrobot_shell_cantilever_n40(shell_cantilever_geom, shell_cantilever_mater
 @pytest.fixture
 def time_stepper_shell_cantilever_n40(softrobot_shell_cantilever_n40):
     fixed_points = np.array(
-        np.where(softrobot_shell_cantilever_n40.q.reshape(-1, 3)[:, 0] <= 0.01)[0])
+        np.where(softrobot_shell_cantilever_n40.state.q.reshape(-1, 3)[:, 0] <= 0.01)[0])
     robot = softrobot_shell_cantilever_n40.fix_nodes(fixed_points)
     return dismech.ImplicitEulerTimeStepper(robot)
 

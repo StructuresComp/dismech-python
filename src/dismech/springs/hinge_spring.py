@@ -7,7 +7,7 @@ class HingeSpring:
         self.nodes_ind = nodes_ind
         self.ind = np.concatenate([robot.map_node_to_dof(i)
                                   for i in nodes_ind], axis=0)
-        self.theta_bar = self.get_theta(*np.split(robot.q[self.ind], 4))
+        self.theta_bar = self.get_theta(*np.split(robot.state.q[self.ind], 4))
 
     # TODO: migrate this to hinge_energy
     @staticmethod

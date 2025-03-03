@@ -23,7 +23,7 @@ def test_static_sim_shell_cantilever_n51(time_stepper_rod_cantilever_n51):
     for i in range(1, steps):
         robot.env.g = robot.env.static_g * (i) / steps
         new_robot = stepper.step()
-        qs.append(new_robot.q)
+        qs.append(new_robot.state.q)
     qs = np.stack(qs)
 
     # Numerical stability
@@ -42,7 +42,7 @@ def test_dynamic_sim_shell_cantilever_n40(time_stepper_shell_cantilever_n40):
     steps = int(robot.sim_params.total_time / robot.sim_params.dt) + 1
     for i in range(1, steps):
         new_robot = stepper.step()
-        qs.append(new_robot.q)
+        qs.append(new_robot.state.q)
     qs = np.stack(qs)
 
     np.allclose(qs, valid_data['qs'][:40])
@@ -63,18 +63,18 @@ def test_dynamic_sim_contortion_n21(time_stepper_contortion_n21):
     steps = int(robot.sim_params.total_time / robot.sim_params.dt) + 1
     for i in range(1, steps):
         new_robot = stepper.step(new_robot)
-        qs.append(new_robot.q)
+        qs.append(new_robot.state.q)
 
         # Move fixed node/edges
         if i * robot.sim_params.dt < 0.15:
-            q = new_robot.q
+            q = new_robot.state.q
             q[robot.map_node_to_dof(robot.fixed_nodes[:3])[
                 :, 0]] += u0 * robot.sim_params.dt
-            new_robot = new_robot.update(q)
+            new_robot = new_robot.update(q=q)
         else:
-            q = new_robot.q
+            q = new_robot.state.q
             q[63:65] += w0 * robot.sim_params.dt
-            new_robot = new_robot.update(q)
+            new_robot = new_robot.update(q=q)
     qs = np.stack(qs)
 
     np.allclose(qs, valid_data['qs'])

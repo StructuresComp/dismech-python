@@ -24,6 +24,6 @@ class NewmarkBetaTimeStepper(TimeStepper):
         return inertial_force, jacobian
 
     def _compute_acceleration(self, robot: SoftRobot, q: np.ndarray) -> np.ndarray:
-        return (q - robot.q - robot.sim_params.dt * robot.u) / \
+        return (q - robot.state.q - robot.sim_params.dt * robot.state.u) / \
             (self._beta * robot.sim_params.dt**2) - \
-            ((1 - 2 * self._beta) / (2 * self._beta)) * robot.a
+            ((1 - 2 * self._beta) / (2 * self._beta)) * robot.state.a

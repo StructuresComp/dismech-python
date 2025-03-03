@@ -5,7 +5,7 @@ from .params import GeomParams, Material
 
 
 def compute_rod_stiffness(geom: GeomParams, material: Material) -> typing.Tuple[float, ...]:
-    EA = material.youngs_rod * geom.axs if geom.axs is not None else np.pi * geom.rod_r0 ** 2
+    EA = material.youngs_rod * (geom.axs if geom.axs is not None else np.pi * geom.rod_r0 ** 2)
 
     if geom.ixs1 and geom.ixs2:
         EI1 = material.youngs_rod * geom.ixs1

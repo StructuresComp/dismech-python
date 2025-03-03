@@ -24,10 +24,11 @@ class SoftRobot:
         self.__sim_params = sim_params
         self.__env = env
 
-        self._initialize_geometry(geo)
-        self._initialize_stiffness(geom, material)
-        self._initialize_reference_frame(geo)
-        self._initialize_directors_and_springs(geo)
+        self._init_geometry(geo)
+        self._init_stiffness(geom, material)
+        self._init_state(geo)
+        self._init_fixed_dof()
+        self._init_directors_and_springs(geo)
         self.__mass_matrix = self._get_mass_matrix(geom, material)
 
         # self.__edge_combos = self._construct_edge_combinations(
@@ -35,7 +36,7 @@ class SoftRobot:
         #                   ) if geo.rod_shell_joint_edges.size else geo.rod_edges
         # )
 
-    def _initialize_geometry(self, geo: Geometry):
+    def _init_geometry(self, geo: Geometry):
         """Initialize geometry properties"""
         self.__n_nodes = geo.nodes.shape[0]
         self.__n_edges_rod_only = geo.rod_edges.shape[0]
@@ -103,7 +104,7 @@ class SoftRobot:
         cross = np.cross(v1, v2)
         return 0.5 * np.linalg.norm(cross, axis=1)
 
-    def _initialize_stiffness(self, geom: GeomParams, material: Material):
+    def _init_stiffness(self, geom: GeomParams, material: Material):
         """Initialize global stiffness properties"""
         self.__EA, self.__EI1, self.__EI2, self.__GJ = compute_rod_stiffness(
             geom, material)
@@ -158,7 +159,8 @@ class SoftRobot:
         self.__mass_matrix[np.ix_(self.map_node_to_dof(
             nodes), self.map_node_to_dof(nodes))] *= scale
 
-    def _initialize_reference_frame(self, geo: Geometry):
+    def _init_state(self, geo: Geometry):
+        """Initialize RobotState state for q0"""
         a1, a2 = self.compute_space_parallel()
         m1, m2 = self.compute_material_directors(self.q0, a1, a2)
 
@@ -178,14 +180,16 @@ class SoftRobot:
 
         self.__state = RobotState.init(self.__q0, a1, a2, m1, m2, ref_twist)
 
-        # everything starts as free
+    def _init_fixed_dof(self):
+        """Initialize all DOF as free"""
         self.__fixed_nodes = np.array([], dtype=np.int64)
         self.__fixed_edges = np.array([], dtype=np.int64)
 
         self.__fixed_dof, self.__free_dof = self._find_fixed_free_dof(
             self.__fixed_nodes, self.__fixed_edges)
 
-    def _initialize_directors_and_springs(self, geo: Geometry):
+    def _init_directors_and_springs(self, geo: Geometry):
+        """Initialize spring list objects"""
         n_rod = geo.rod_stretch_springs.shape[0]
 
         # Stretch springs
@@ -197,8 +201,8 @@ class SoftRobot:
 
         self.__bend_twist_springs = [
             BendTwistSpring(
-                spring, sign, np.array([0, 0]), 0, self)
-            for spring, sign in zip(geo.bend_twist_springs, geo.bend_twist_signs)
+                spring, sign, np.array([0, 0]), undef_ref_twist, self)
+            for spring, sign, undef_ref_twist in zip(geo.bend_twist_springs, geo.bend_twist_signs, self.__undef_ref_twist)
         ]
 
         # Hinge springs
@@ -206,12 +210,9 @@ class SoftRobot:
             HingeSpring(spring, self) for spring in geo.hinges
         ]
 
+        # TODO: Move this functionality into bend_twist_spring init
         # Set initial spring parameters
         self._set_kappa(self.state.m1, self.state.m2)
-        for i, spring in enumerate(self.bend_twist_springs):
-            spring.undef_ref_twist = self.__undef_ref_twist[i]
-        # TODO: set theta_bar
-
         # Mid-edge?
 
     @staticmethod
@@ -586,11 +587,6 @@ class SoftRobot:
     def undef_ref_twist(self) -> np.ndarray:
         """Initial reference twist values (n_bend_twist_springs,)"""
         return self.__undef_ref_twist.view()
-
-    @property
-    def ref_twist(self) -> np.ndarray:
-        """Reference twist values (n_bend_twist_springs,)"""
-        return self.__ref_twist.view()
 
     @property
     def fixed_nodes(self) -> np.ndarray:

@@ -68,7 +68,7 @@ def test_dynamic_sim_contortion_n21(time_stepper_contortion_n21):
         # Move fixed node/edges
         if i * robot.sim_params.dt < 0.15:
             q = new_robot.q
-            q[robot.map_node_to_dof(stepper.fixed_nodes[:3])[
+            q[robot.map_node_to_dof(robot.fixed_nodes[:3])[
                 :, 0]] += u0 * robot.sim_params.dt
             new_robot = new_robot.update(q)
         else:

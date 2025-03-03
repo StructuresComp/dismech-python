@@ -91,7 +91,8 @@ class SoftRobot:
                 (self.__q0, np.zeros(self.__n_edges_shell_only)))
 
         self.__q = self.__q0.copy()
-        self.__u = np.zeros(self.__q0.size)
+        self.__u = np.zeros_like(self.__q0)
+        self.__a = np.zeros_like(self.__q0)
 
         # Precompute reference metrics
         self.__ref_len = self._get_ref_len()
@@ -260,7 +261,6 @@ class SoftRobot:
     @staticmethod
     def _construct_edge_combinations(edges: np.ndarray) -> np.ndarray:
         n = edges.shape[0]
-        # FIXME: not sure what default should be
         if n == 0:
             return np.array([])
 
@@ -278,7 +278,7 @@ class SoftRobot:
         # Vectorize face processing
         all_p_is = self.__q[3 * faces].reshape(-1, 3, 3)
         all_xi_is = self.__q[3*self.__n_nodes + face_edges]
-        tau_0 = self.update_pre_comp_shell(self.__q)
+        tau_0 = self._update_pre_comp_shell(self.__q)
         all_tau0_is = tau_0[:, face_edges].transpose(1, 0, 2)
 
         # Compute t, f, c for all faces simultaneously
@@ -488,7 +488,7 @@ class SoftRobot:
 
         return angle * sign
 
-    def update_pre_comp_shell(self, q: np.ndarray) -> np.ndarray:
+    def _update_pre_comp_shell(self, q: np.ndarray) -> np.ndarray:
         faces = self.__face_nodes_shell
         face_edges = self.__face_edges
 
@@ -576,7 +576,7 @@ class SoftRobot:
 
         return a1, a2
 
-    def find_fixed_free_dof(self, fixed_nodes: typing.List[int], fixed_edges: typing.List[int]) -> typing.Tuple[np.ndarray, np.ndarray]:
+    def _find_fixed_free_dof(self, fixed_nodes: typing.List[int], fixed_edges: typing.List[int]) -> typing.Tuple[np.ndarray, np.ndarray]:
         # Vectorized node DOF mapping
         node_dofs = 3 * np.array(fixed_nodes)[:, None] + np.arange(3)
         fixed_node_dofs = node_dofs.ravel()
@@ -598,17 +598,16 @@ class SoftRobot:
         self._compute_space_parallel()
 
         # Material frame computation
-        theta = self.get_theta(self.q0)
         self.__m1, self.__m2 = self.compute_material_directors(
-            self.a1, self.a2, theta)
+            self.a1, self.a2, self.get_theta(self.q0))
 
         # Reference twist computation
         self.__undef_ref_twist = self.compute_reference_twist(
-            self.bend_twist_springs, self.a1, self.tangent, np.zeros(
+            self.bend_twist_springs, self.a1, self.__tangent, np.zeros(
                 len(self.__bend_twist_springs))
         )
         self.__ref_twist = self.compute_reference_twist(
-            self.bend_twist_springs, self.a1, self.tangent, self.__undef_ref_twist
+            self.bend_twist_springs, self.a1, self.__tangent, self.__undef_ref_twist
         )
 
         # Set initial spring parameters
@@ -617,11 +616,12 @@ class SoftRobot:
             spring.undef_ref_twist = self.__undef_ref_twist[i]
         # TODO: set theta_bar
 
-        # empty fixed nodes
-        self.__fixed_nodes = np.empty(0)
-        self.__fixed_edges = np.array(0)
-        self.__fixed_dof = np.array(0)
-        self.__free_dof = np.array(0)
+        # everything starts as free
+        self.__fixed_nodes = np.array([], dtype=np.int64)
+        self.__fixed_edges = np.array([], dtype=np.int64)
+
+        self.__fixed_dof, self.__free_dof = self._find_fixed_free_dof(
+            self.__fixed_nodes, self.__fixed_edges)
 
     def _get_fixed_edges(self, fixed_nodes: np.ndarray) -> np.ndarray:
         # Add edges in between fixed nodes
@@ -636,7 +636,7 @@ class SoftRobot:
 
         return fixed_edge_indices
 
-    def free_nodes(self, nodes: np.ndarray, dof: np.ndarray = None) -> "SoftRobot":
+    def free_nodes(self, nodes: np.ndarray, fix_edges: bool = True) -> "SoftRobot":
         """ Return a SoftRobot object with freed nodes. If nodes is None, all nodes and edges are freed """
         # remove all nodes, or specified ones
         if nodes is None:
@@ -645,26 +645,22 @@ class SoftRobot:
             mask = np.isin(self.__fixed_nodes, nodes, invert=True)
             new_fixed_nodes = self.__fixed_nodes[mask]
 
-        return self.fix_nodes(new_fixed_nodes)
+        return self.fix_nodes(new_fixed_nodes, fix_edges)
 
-    def fix_nodes(self, nodes: np.ndarray, dof: np.ndarray = None) -> "SoftRobot":
+    def fix_nodes(self, nodes: np.ndarray, fix_edges: bool = True) -> "SoftRobot":
         """ Return a SoftRobot object with new fixed nodes """
         ret = copy.copy(self)
-        total_fixed_nodes = np.union1d(nodes, ret.__fixed_nodes)
-        ret.__fixed_edges = ret._get_fixed_edges(total_fixed_nodes)
-        ret.__fixed_dof, ret.__free_dof = ret.find_fixed_free_dof(
-            total_fixed_nodes, ret.__fixed_edges)
+        ret.__fixed_nodes = np.union1d(nodes, ret.__fixed_nodes)
+        if fix_edges:
+            ret.__fixed_edges = ret._get_fixed_edges(ret.__fixed_nodes)
+        ret.__fixed_dof, ret.__free_dof = ret._find_fixed_free_dof(
+            ret.__fixed_nodes, ret.__fixed_edges)
         return ret
-
-    def move_nodes(self):
-        pass
-
-    def set_edge_theta(self):
-        pass
 
     def update(self,
                q: np.ndarray,
                u: np.ndarray = None,
+               a: np.ndarray = None,
                a1: np.ndarray = None,
                a2: np.ndarray = None,
                m1: np.ndarray = None,
@@ -674,6 +670,8 @@ class SoftRobot:
         ret.__q = q.copy()
         if u is not None:
             ret.__u = u.copy()
+        if u is not None:
+            ret.__a = a.copy()
         if a1 is not None:
             ret.__a1 = a1.copy()
         if a2 is not None:
@@ -691,9 +689,24 @@ class SoftRobot:
         return q[3*self.__n_nodes: 3*self.__n_nodes + self.__n_edges_dof]
 
     @property
-    def ref_len(self) -> np.ndarray:
-        """Reference lengths for all edges (n_edges,)"""
-        return self.__ref_len.view()
+    def n_dof(self) -> int:
+        """Total number of degrees of freedom"""
+        return self.__n_dof
+
+    @property
+    def node_dof_indices(self) -> np.ndarray:
+        """Node DOF indices matrix (n_nodes, 3)"""
+        return np.arange(3 * self.__n_nodes).reshape(-1, 3)
+
+    @property
+    def end_node_dof_index(self) -> int:
+        """First edge DOF index after node DOFs"""
+        return 3 * self.__n_nodes
+
+    @property
+    def q0(self) -> np.ndarray:
+        """Initial state vector (n_dof,)"""
+        return self.__q0.view()
 
     @property
     def q(self) -> np.ndarray:
@@ -706,9 +719,9 @@ class SoftRobot:
         return self.__u.view()
 
     @property
-    def q0(self) -> np.ndarray:
-        """Initial state vector (n_dof,)"""
-        return self.__q0.view()
+    def a(self) -> np.ndarray:
+        """Current acceleration vector (n_dof,)"""
+        return self.__a.view()
 
     @property
     def a1(self) -> np.ndarray:
@@ -734,6 +747,11 @@ class SoftRobot:
     def hinge_springs(self) -> typing.List[HingeSpring]:
         """List of hinge spring elements"""
         return self.__hinge_springs
+
+    @property
+    def edges(self) -> np.ndarray:
+        """Edges (n_edges, 2)"""
+        return self.__edges.view()
 
     @property
     def face_nodes_shell(self) -> np.ndarray:
@@ -766,11 +784,6 @@ class SoftRobot:
         return self.__kb
 
     @property
-    def n_dof(self) -> int:
-        """Total number of degrees of freedom"""
-        return self.__n_dof
-
-    @property
     def sim_params(self) -> SimParams:
         """Simulation parameters object"""
         return self.__sim_params
@@ -786,23 +799,19 @@ class SoftRobot:
         return self.__mass_matrix.view()
 
     @property
-    def node_dof_indices(self) -> np.ndarray:
-        """Node DOF indices matrix (n_nodes, 3)"""
-        return np.arange(3 * self.__n_nodes).reshape(-1, 3)
+    def ref_len(self) -> np.ndarray:
+        """Reference lengths for all edges (n_edges,)"""
+        return self.__ref_len.view()
 
     @property
-    def end_node_dof_index(self) -> int:
-        """First edge DOF index after node DOFs"""
-        return 3 * self.__n_nodes
+    def voronoi_area(self) -> np.ndarray:
+        """Voronoi area per node (n_nodes,)"""
+        return self.__voronoi_area.view()
 
     @property
-    def edges(self):
-        return self.__edges
-
-    @property
-    def tangent(self) -> np.ndarray:
-        """Current edge tangents (n_edges_dof, 3)"""
-        return self.__tangent.view()
+    def face_area(self) -> np.ndarray:
+        """Face areas for shell elements (n_faces,)"""
+        return self.__face_area.view()
 
     @property
     def undef_ref_twist(self) -> np.ndarray:
@@ -815,6 +824,16 @@ class SoftRobot:
         return self.__ref_twist.view()
 
     @property
+    def fixed_nodes(self) -> np.ndarray:
+        """Fixed node ids"""
+        return self.__fixed_nodes.view()
+
+    @property
+    def fixed_edges(self) -> np.ndarray:
+        """Fixed edge ids"""
+        return self.__fixed_edges.view()
+
+    @property
     def fixed_dof(self) -> np.ndarray:
         """Indices of constrained degrees of freedom"""
         return self.__fixed_dof.view()
@@ -823,13 +842,3 @@ class SoftRobot:
     def free_dof(self) -> np.ndarray:
         """Indices of free degrees of freedom"""
         return self.__free_dof.view()
-
-    @property
-    def voronoi_area(self) -> np.ndarray:
-        """Voronoi area per node (n_nodes,)"""
-        return self.__voronoi_area.view()
-
-    @property
-    def face_area(self) -> np.ndarray:
-        """Face areas for shell elements (n_faces,)"""
-        return self.__face_area.view()

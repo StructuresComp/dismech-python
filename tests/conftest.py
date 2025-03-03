@@ -69,7 +69,9 @@ def softrobot_rod_cantilever_n51(rod_cantilever_geom, rod_cantilever_material, r
 
 @pytest.fixture
 def time_stepper_rod_cantilever_n51(softrobot_rod_cantilever_n51):
-    return dismech.TimeStepper(softrobot_rod_cantilever_n51, np.array([0, 1, 2, 3, 4, 5]))
+    robot = softrobot_rod_cantilever_n51.fix_nodes(
+        np.array([0, 1, 2, 3, 4, 5]))
+    return dismech.ImplicitEulerTimeStepper(robot)
 
 
 @pytest.fixture
@@ -97,7 +99,10 @@ def time_stepper_contortion_n21(softrobot_contortion_n21):
         softrobot_contortion_n21.q[softrobot_contortion_n21.node_dof_indices].reshape(-1, 3)[:, 0] >= end)[0])
     start_points = np.array(np.where(
         softrobot_contortion_n21.q[softrobot_contortion_n21.node_dof_indices].reshape(-1, 3)[:, 0] <= start)[0])
-    return dismech.TimeStepper(softrobot_contortion_n21, np.concat((start_points, end_points)))
+
+    robot = softrobot_contortion_n21.fix_nodes(
+        np.concat((start_points, end_points)))
+    return dismech.ImplicitEulerTimeStepper(robot)
 
 # shell cantilever
 
@@ -131,7 +136,8 @@ def softrobot_shell_cantilever_n40(shell_cantilever_geom, shell_cantilever_mater
 def time_stepper_shell_cantilever_n40(softrobot_shell_cantilever_n40):
     fixed_points = np.array(
         np.where(softrobot_shell_cantilever_n40.q.reshape(-1, 3)[:, 0] <= 0.01)[0])
-    return dismech.TimeStepper(softrobot_shell_cantilever_n40, fixed_points)
+    robot = softrobot_shell_cantilever_n40.fix_nodes(fixed_points)
+    return dismech.ImplicitEulerTimeStepper(robot)
 
 # parachute
 
@@ -163,7 +169,7 @@ def softrobot_hexparachute_n6(hexparachute_n6_geom, hexparachute_n6_material, he
 
 @pytest.fixture
 def time_stepper_hexparachute_n6(softrobot_hexparachute_n6):
-    return dismech.TimeStepper(softrobot_hexparachute_n6, np.array([]))
+    return dismech.ImplicitEulerTimeStepper(softrobot_hexparachute_n6)
 
 # pneunet
 

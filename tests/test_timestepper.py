@@ -13,68 +13,33 @@ def rel_path(fname: str) -> pathlib.Path:
 
 def test_static_sim_shell_cantilever_n51(time_stepper_rod_cantilever_n51):
     stepper = time_stepper_rod_cantilever_n51
-    robot = stepper.robot
-    robot.env.set_static()
+    stepper.robot.env.set_static()
+    robots = stepper.simulate()
+    qs = np.stack([robot.state.q for robot in robots])
+
     valid_data = scipy.io.loadmat(
         rel_path('resources/rod_cantilever/rod_cantilever_n51_static_sim.mat'))
-
-    qs = []
-    steps = int(robot.sim_params.total_time / robot.sim_params.dt) + 1
-    for i in range(1, steps):
-        robot.env.g = robot.env.static_g * (i) / steps
-        new_robot = stepper.step()
-        qs.append(new_robot.state.q)
-    qs = np.stack(qs)
-
-    # Numerical stability
-    assert (np.allclose(qs[:,robot.end_node_dof_index], valid_data['qs'][:,robot.end_node_dof_index]))
+    assert (np.allclose(qs[:, stepper.robot.end_node_dof_index],
+            valid_data['qs'][:, stepper.robot.end_node_dof_index]))
 
 
 def test_dynamic_sim_shell_cantilever_n40(time_stepper_shell_cantilever_n40):
     stepper = time_stepper_shell_cantilever_n40
-    robot = stepper.robot
+    stepper.robot.sim_params.total_time = 0.4
+    robots = stepper.simulate()
+    qs = np.stack([robot.state.q for robot in robots])
+
     valid_data = scipy.io.loadmat(
         rel_path('resources/shell_cantilever/shell_cantilever_n40_dynamic_sim.mat'))
-
-    robot.sim_params.total_time = 0.4   # way too long otherwise
-
-    qs = []
-    steps = int(robot.sim_params.total_time / robot.sim_params.dt) + 1
-    for i in range(1, steps):
-        new_robot = stepper.step()
-        qs.append(new_robot.state.q)
-    qs = np.stack(qs)
-
     np.allclose(qs, valid_data['qs'][:40])
 
 
 def test_dynamic_sim_contortion_n21(time_stepper_contortion_n21):
-    u0 = 0.1
-    w0 = 2
-
     stepper = time_stepper_contortion_n21
-    robot = stepper.robot   # update robot
-    new_robot = robot
+    stepper.robot.sim_params.total_time = 1.0
+    robots = stepper.simulate()
+    qs = np.stack([robot.state.q for robot in robots])
+
     valid_data = scipy.io.loadmat(
         rel_path('resources/contortion/contortion_n21_dynamic_sim.mat'))
-    robot.sim_params.total_time = 1.0
-
-    qs = []
-    steps = int(robot.sim_params.total_time / robot.sim_params.dt) + 1
-    for i in range(1, steps):
-        new_robot = stepper.step(new_robot)
-        qs.append(new_robot.state.q)
-
-        # Move fixed node/edges
-        if i * robot.sim_params.dt < 0.15:
-            q = new_robot.state.q
-            q[robot.map_node_to_dof(robot.fixed_nodes[:3])[
-                :, 0]] += u0 * robot.sim_params.dt
-            new_robot = new_robot.update(q=q)
-        else:
-            q = new_robot.state.q
-            q[63:65] += w0 * robot.sim_params.dt
-            new_robot = new_robot.update(q=q)
-    qs = np.stack(qs)
-
     np.allclose(qs, valid_data['qs'])

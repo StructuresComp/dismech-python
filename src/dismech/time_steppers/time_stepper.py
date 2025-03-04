@@ -39,15 +39,6 @@ class TimeStepper(metaclass=abc.ABCMeta):
         # TODO: figure out how to pass parameters
         self._solver = _SOLVERS.get(robot.sim_params.solver, NumpySolver)()
 
-        # Preallocate matrices
-        self._forces = np.empty_like(self.robot.state.q, dtype=dtype)
-        self._jacobian = np.empty(
-            (self.robot.state.q.shape[0], self.robot.state.q.shape[0]), dtype=dtype)
-        self._f_free = np.empty_like(self.robot.free_dof, dtype=dtype)
-        self._j_free = np.empty(
-            (self.robot.free_dof.shape[0], self.robot.free_dof.shape[0]), dtype=dtype)
-        self._dq_free = np.empty_like(self.robot.free_dof, dtype=dtype)
-
         # Simulate callbacks
         self.before_step = None
 
@@ -75,6 +66,15 @@ class TimeStepper(metaclass=abc.ABCMeta):
         solved = False
         iteration_limit = False
 
+        # Preallocate matrices
+        self._forces = np.empty(robot.state.q.shape[0])
+        self._jacobian = np.empty(
+            (robot.state.q.shape[0], robot.state.q.shape[0]))
+        self._f_free = np.empty(robot.state.free_dof.shape[0])
+        self._j_free = np.empty(
+            (robot.state.free_dof.shape[0], robot.state.free_dof.shape[0]))
+        self._dq_free = np.empty(robot.state.free_dof.shape[0])
+
         while not solved:
             # Updates private variables
             self._compute_forces_and_jacobian(robot, q, robot.state.q)
@@ -91,9 +91,9 @@ class TimeStepper(metaclass=abc.ABCMeta):
                             out=self._jacobian)
 
             # Handle free DOF components
-            self._f_free[:] = self._forces[robot.free_dof]
+            self._f_free[:] = self._forces[robot.state.free_dof]
             self._j_free[:] = self._jacobian[np.ix_(
-                robot.free_dof, robot.free_dof)]
+                robot.state.free_dof, robot.state.free_dof)]
 
             # Linear system solver
             if np.linalg.norm(self._f_free) < self._min_force:
@@ -104,7 +104,7 @@ class TimeStepper(metaclass=abc.ABCMeta):
 
             # Adaptive damping and update
             self._dq_free *= self._adaptive_damping(alpha, iteration)
-            q[robot.free_dof] -= self._dq_free
+            q[robot.state.free_dof] -= self._dq_free
 
             # Error and convergence
             err = np.linalg.norm(self._f_free)

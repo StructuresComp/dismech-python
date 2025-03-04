@@ -28,7 +28,6 @@ class SoftRobot:
         self._init_geometry(geo)
         self._init_stiffness(geom, material)
         self._init_state(geo)
-        self._init_fixed_dof()
         self._init_springs(geo)
         self.__mass_matrix = self._get_mass_matrix(geom, material)
 
@@ -96,14 +95,6 @@ class SoftRobot:
             ref_twist = np.array([])
 
         self.__state = RobotState.init(self.__q0, a1, a2, m1, m2, ref_twist)
-
-    def _init_fixed_dof(self):
-        """Initialize all DOF as free"""
-        self.__fixed_nodes = np.array([], dtype=np.int64)
-        self.__fixed_edges = np.array([], dtype=np.int64)
-
-        self.__fixed_dof, self.__free_dof = self._find_fixed_free_dof(
-            self.__fixed_nodes, self.__fixed_edges)
 
     def _init_springs(self, geo: Geometry):
         """Initialize spring list objects"""
@@ -374,67 +365,60 @@ class SoftRobot:
         tangent[np.abs(tangent) < _TANGENT_THRESHOLD] = 0
 
         return tangent
+    
+    # Fix/free nodes and edges
 
-    def free_nodes(self, nodes: np.ndarray, nodes_dof: np.ndarray | None = None, free_edges: bool = True) -> "SoftRobot":
-        """ Return a SoftRobot object with freed nodes. If nodes is None, all nodes and edges are freed """
-        # remove all nodes, or specified ones
-        if nodes is None:
-            new_fixed_nodes = np.empty(0)
-        else:
-            mask = np.isin(self.__fixed_nodes, nodes, invert=True)
-            new_fixed_nodes = self.__fixed_nodes[mask]
-
-        # only recalculate edges if free_edges is true
-        return self._fix_nodes(new_fixed_nodes, nodes_dof, free_edges)
-
-    def fix_nodes(self, nodes: np.ndarray, nodes_dof: np.ndarray | None = None, fix_edges: bool = True) -> "SoftRobot":
-        """ Return a SoftRobot object with additional fixed nodes """
-        return self._fix_nodes(np.union1d(nodes, self.__fixed_nodes), nodes_dof, fix_edges)
-
-    def _fix_nodes(self, nodes, node_dof, fix_edges):
-        ret = copy.copy(self)
-        ret.__fixed_nodes = nodes
+    def free_nodes(self, nodes: np.ndarray, dof: np.ndarray | None = None, fix_edges: bool = True) -> "SoftRobot":
+        new_dof = np.setdiff1d(self.fixed_dof, self._get_node_dof_mask(
+            nodes, dof), assume_unique=True)
         if fix_edges:
-            ret.__fixed_edges = ret._get_fixed_edges(ret.__fixed_nodes)
-        ret.__fixed_dof, ret.__free_dof = ret._find_fixed_free_dof(
-            ret.__fixed_nodes, ret.__fixed_edges)
-        return ret
+            new_dof = np.setdiff1d(
+                new_dof, self._get_intermediate_edge_dof(nodes), assume_unique=True)
+        return self._fix_dof(new_dof)
 
-    def _find_fixed_free_dof(self, fixed_nodes: typing.List[int], fixed_edges: typing.List[int]) -> typing.Tuple[np.ndarray, np.ndarray]:
-        # Vectorized node DOF mapping
-        node_dofs = 3 * np.array(fixed_nodes)[:, None] + np.arange(3)
-        fixed_node_dofs = node_dofs.ravel()
+    def fix_nodes(self, nodes: np.ndarray, dof: np.ndarray | None = None, fix_edges: bool = True) -> "SoftRobot":
+        new_dof = np.union1d(
+            self.fixed_dof, self._get_node_dof_mask(nodes, dof))
+        if fix_edges:
+            new_dof = np.union1d(
+                new_dof, self._get_intermediate_edge_dof(nodes))
+        return self._fix_dof(new_dof)
 
-        # Edge DOF mapping
-        fixed_edge_dofs = 3 * self.__n_nodes + np.array(fixed_edges)
+    def free_edges(self, edges: np.ndarray) -> "SoftRobot":
+        new_dof = np.setdiff1d(
+            self.fixed_dof, self._get_edge_dof(edges), assume_unique=True)
+        return self._fix_dof(new_dof)
 
-        # Combine fixed DOFs
-        fixed_dof = np.unique(np.concatenate(
-            [fixed_node_dofs, fixed_edge_dofs]))
+    def fix_edges(self, edges: np.ndarray) -> "SoftRobot":
+        new_dof = np.union1d(self.fixed_dof, self.map_edge_to_dof(edges))
+        return self._fix_dof(new_dof)
 
-        # Find free DOFs using set operations
-        all_dofs = np.arange(self.__n_dof)
-        free_dof = np.setdiff1d(all_dofs, fixed_dof, assume_unique=True)
+    def _fix_dof(self, new_fixed_dof):
+        return copy.copy(self).update(free_dof=np.setdiff1d(np.arange(self.__n_dof), new_fixed_dof, assume_unique=True))
 
-        return fixed_dof, free_dof
+    @staticmethod
+    def _get_node_dof_mask(nodes: np.ndarray, dof: np.ndarray | None = None):
+        """Masked get_node_dof for fixing specific axes """
+        node_dof = SoftRobot.map_node_to_dof(nodes)
+        return (node_dof if dof is None else node_dof[dof]).ravel()
 
-    def _get_fixed_edges(self, fixed_nodes: np.ndarray) -> np.ndarray:
+    def _get_intermediate_edge_dof(self, nodes: np.ndarray) -> np.ndarray:
         # Add edges in between fixed nodes
-        edge_mask = np.isin(self.__edges[:, 0], fixed_nodes) & np.isin(
-            self.__edges[:, 1], fixed_nodes)
-        fixed_edge_indices = np.where(edge_mask)[0]
+        edge_mask = np.isin(self.__edges[:, 0], nodes) & np.isin(
+            self.__edges[:, 1], nodes)
+        edges = np.where(edge_mask)[0]
 
         # if 2d, edges cannot twist
         if self.sim_params.two_d_sim:
-            fixed_edge_indices = np.union1d(
-                fixed_edge_indices, np.arange(self.__n_edges_dof))
+            edges = np.union1d(
+                edges, np.arange(self.__n_edges_dof))
 
-        return fixed_edge_indices
+        return self.map_edge_to_dof(edges)
 
     # Utility
 
     @staticmethod
-    def map_node_to_dof(node_nums: typing.Union[int, np.ndarray]) -> np.ndarray:
+    def map_node_to_dof(node_nums: typing.Union[int, np.ndarray], mask=None) -> np.ndarray:
         return (3 * np.asarray(node_nums))[..., None] + np.array([0, 1, 2])
 
     def map_edge_to_dof(self, edge_nums: typing.Union[int, np.ndarray]) -> np.ndarray:
@@ -505,7 +489,7 @@ class SoftRobot:
         """List of hinge spring elements"""
         return self.__shell_hinge_springs
 
-    # Geometric relationships (for visualizing)
+    # Visualization properties
 
     @property
     def nodes(self) -> np.ndarray:
@@ -521,6 +505,11 @@ class SoftRobot:
     def face_nodes_shell(self) -> np.ndarray:
         """Shell face node indices (n_faces, 3)"""
         return self.__face_nodes_shell.view()
+
+    @property
+    def fixed_dof(self) -> np.ndarray:
+        """Indices of constrained degrees of freedom"""
+        return np.setdiff1d(np.arange(self.n_dof), self.state.free_dof, assume_unique=True)
 
     # Geometric constants
 
@@ -543,23 +532,3 @@ class SoftRobot:
     def mass_matrix(self) -> np.ndarray:
         """Diagonal mass matrix (n_dof, n_dof)"""
         return self.__mass_matrix.view()
-
-    @property
-    def fixed_nodes(self) -> np.ndarray:
-        """Fixed node ids"""
-        return self.__fixed_nodes.view()
-
-    @property
-    def fixed_edges(self) -> np.ndarray:
-        """Fixed edge ids"""
-        return self.__fixed_edges.view()
-
-    @property
-    def fixed_dof(self) -> np.ndarray:
-        """Indices of constrained degrees of freedom"""
-        return self.__fixed_dof.view()
-
-    @property
-    def free_dof(self) -> np.ndarray:
-        """Indices of free degrees of freedom"""
-        return self.__free_dof.view()

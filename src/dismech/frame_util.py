@@ -1,4 +1,3 @@
-import typing
 import numpy as np
 
 
@@ -6,8 +5,8 @@ def compute_reference_twist(edges: np.ndarray,
                             sgn: np.ndarray,
                             a1: np.ndarray, tangent: np.ndarray,
                             ref_twist: np.ndarray) -> np.ndarray:
-    e0 = edges[:,0]
-    e1 = edges[:,1]
+    e0 = edges[:, 0]
+    e1 = edges[:, 1]
     t0 = tangent[e0] * sgn[:, 0][:, None]
     t1 = tangent[e1] * sgn[:, 1][:, None]
     u0 = a1[e0]

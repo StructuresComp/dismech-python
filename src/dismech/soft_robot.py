@@ -20,15 +20,16 @@ class SoftRobot:
     def __init__(self, geom: GeomParams, material: Material,
                  geo: Geometry, sim_params: SimParams,
                  env: Environment):
-        # store mutable
+        # Store mutable parameters
         self.__sim_params = sim_params
         self.__env = env
 
+        # Multipart initialization
         self._init_geometry(geo)
         self._init_stiffness(geom, material)
         self._init_state(geo)
         self._init_fixed_dof()
-        self._init_directors_and_springs(geo)
+        self._init_springs(geo)
         self.__mass_matrix = self._get_mass_matrix(geom, material)
 
         # self.__edge_combos = self._construct_edge_combinations(
@@ -69,47 +70,68 @@ class SoftRobot:
         self.__voronoi_area = self._get_voronoi_area()
         self.__face_area = self._get_face_area()
 
-    def _get_ref_len(self) -> np.ndarray:
-        vectors = self.__nodes[self.__edges[:, 1]] - \
-            self.__nodes[self.__edges[:, 0]]
-        return np.linalg.norm(vectors, axis=1)
-
-    def _get_voronoi_ref_len(self) -> np.ndarray:
-        edges = self.__edges[:self.__n_edges_dof]
-        n_nodes = self.__n_nodes
-        weights = 0.5 * self.__ref_len[:self.__n_edges_dof]
-        contributions = np.zeros(n_nodes)
-        np.add.at(contributions, edges[:, 0], weights)
-        np.add.at(contributions, edges[:, 1], weights)
-        return contributions
-
-    def _get_voronoi_area(self) -> np.ndarray:
-        if not self.__face_nodes_shell.size:
-            return np.empty(0)
-        faces = self.__face_nodes_shell
-        v1 = self.__nodes[faces[:, 1]] - self.__nodes[faces[:, 0]]
-        v2 = self.__nodes[faces[:, 2]] - self.__nodes[faces[:, 1]]
-        cross = np.cross(v1, v2)
-        areas = 0.5 * np.linalg.norm(cross, axis=1)
-        node_areas = np.bincount(faces.ravel(), weights=np.repeat(
-            areas / 3, 3), minlength=self.__n_nodes)
-        return node_areas
-
-    def _get_face_area(self) -> np.ndarray:
-        if not self.__n_faces:
-            return np.empty(0)
-        faces = self.__face_nodes_shell
-        v1 = self.__nodes[faces[:, 1]] - self.__nodes[faces[:, 0]]
-        v2 = self.__nodes[faces[:, 2]] - self.__nodes[faces[:, 1]]
-        cross = np.cross(v1, v2)
-        return 0.5 * np.linalg.norm(cross, axis=1)
-
     def _init_stiffness(self, geom: GeomParams, material: Material):
         """Initialize global stiffness properties"""
         self.__EA, self.__EI1, self.__EI2, self.__GJ = compute_rod_stiffness(
             geom, material)
         self.__ks, self.__kb = compute_shell_stiffness(
             geom, material, self.ref_len, self.sim_params.use_mid_edge)
+
+    def _init_state(self, geo: Geometry):
+        """Initialize RobotState state for q0"""
+        a1, a2 = self.compute_space_parallel()
+        m1, m2 = self.compute_material_directors(self.q0, a1, a2)
+
+        edges = np.array([(s[1], s[3])
+                         for s in geo.bend_twist_springs], dtype=np.int64)
+        sign = np.array([sign for sign in geo.bend_twist_signs])
+
+        if edges.size:
+            self.__undef_ref_twist = compute_reference_twist(
+                edges, sign, a1, self.__tangent, np.zeros(sign.shape[0]))
+            ref_twist = compute_reference_twist(
+                edges, sign, a1, self.__tangent, self.__undef_ref_twist
+            )
+        else:
+            self.__undef_ref_twist = np.array([])
+            ref_twist = np.array([])
+
+        self.__state = RobotState.init(self.__q0, a1, a2, m1, m2, ref_twist)
+
+    def _init_fixed_dof(self):
+        """Initialize all DOF as free"""
+        self.__fixed_nodes = np.array([], dtype=np.int64)
+        self.__fixed_edges = np.array([], dtype=np.int64)
+
+        self.__fixed_dof, self.__free_dof = self._find_fixed_free_dof(
+            self.__fixed_nodes, self.__fixed_edges)
+
+    def _init_springs(self, geo: Geometry):
+        """Initialize spring list objects"""
+        n_rod = geo.rod_stretch_springs.shape[0]
+
+        # Stretch springs
+        rod_springs = [StretchSpring(spring, self.ref_len[i], self)
+                       for i, spring in enumerate(geo.rod_stretch_springs)]
+        shell_springs = [StretchSpring(spring, self.ref_len[i + n_rod], self, self.__ks[i + n_rod])
+                         for i, spring in enumerate(geo.shell_stretch_springs)]
+        self.__stretch_springs = rod_springs + shell_springs
+
+        self.__bend_twist_springs = [
+            BendTwistSpring(
+                spring, sign, np.array([0, 0]), undef_ref_twist, self)
+            for spring, sign, undef_ref_twist in zip(geo.bend_twist_springs, geo.bend_twist_signs, self.__undef_ref_twist)
+        ]
+
+        # Hinge springs
+        self.__shell_hinge_springs = [
+            HingeSpring(spring, self) for spring in geo.hinges
+        ]
+
+        # TODO: Move this functionality into bend_twist_spring init
+        # Set initial spring parameters
+        self._set_kappa(self.state.m1, self.state.m2)
+        # Mid-edge?
 
     def _get_mass_matrix(self, geom: GeomParams, material: Material) -> np.ndarray:
         mass = np.zeros(self.__n_dof)
@@ -148,6 +170,41 @@ class SoftRobot:
 
         return np.diag(mass)
 
+    def _get_ref_len(self) -> np.ndarray:
+        vectors = self.__nodes[self.__edges[:, 1]] - \
+            self.__nodes[self.__edges[:, 0]]
+        return np.linalg.norm(vectors, axis=1)
+
+    def _get_voronoi_ref_len(self) -> np.ndarray:
+        edges = self.__edges[:self.__n_edges_dof]
+        n_nodes = self.__n_nodes
+        weights = 0.5 * self.__ref_len[:self.__n_edges_dof]
+        contributions = np.zeros(n_nodes)
+        np.add.at(contributions, edges[:, 0], weights)
+        np.add.at(contributions, edges[:, 1], weights)
+        return contributions
+
+    def _get_voronoi_area(self) -> np.ndarray:
+        if not self.__face_nodes_shell.size:
+            return np.empty(0)
+        faces = self.__face_nodes_shell
+        v1 = self.__nodes[faces[:, 1]] - self.__nodes[faces[:, 0]]
+        v2 = self.__nodes[faces[:, 2]] - self.__nodes[faces[:, 1]]
+        cross = np.cross(v1, v2)
+        areas = 0.5 * np.linalg.norm(cross, axis=1)
+        node_areas = np.bincount(faces.ravel(), weights=np.repeat(
+            areas / 3, 3), minlength=self.__n_nodes)
+        return node_areas
+
+    def _get_face_area(self) -> np.ndarray:
+        if not self.__n_faces:
+            return np.empty(0)
+        faces = self.__face_nodes_shell
+        v1 = self.__nodes[faces[:, 1]] - self.__nodes[faces[:, 0]]
+        v2 = self.__nodes[faces[:, 2]] - self.__nodes[faces[:, 1]]
+        cross = np.cross(v1, v2)
+        return 0.5 * np.linalg.norm(cross, axis=1)
+
     @staticmethod
     def map_node_to_dof(node_nums: typing.Union[int, np.ndarray]) -> np.ndarray:
         return (3 * np.asarray(node_nums))[..., None] + np.array([0, 1, 2])
@@ -158,62 +215,6 @@ class SoftRobot:
     def scale_mass_matrix(self, nodes: int | np.ndarray, scale: float):
         self.__mass_matrix[np.ix_(self.map_node_to_dof(
             nodes), self.map_node_to_dof(nodes))] *= scale
-
-    def _init_state(self, geo: Geometry):
-        """Initialize RobotState state for q0"""
-        a1, a2 = self.compute_space_parallel()
-        m1, m2 = self.compute_material_directors(self.q0, a1, a2)
-
-        edges = np.array([(s[1], s[3])
-                         for s in geo.bend_twist_springs], dtype=np.int64)
-        sign = np.array([sign for sign in geo.bend_twist_signs])
-
-        if edges.size:
-            self.__undef_ref_twist = compute_reference_twist(
-                edges, sign, a1, self.__tangent, np.zeros(sign.shape[0]))
-            ref_twist = compute_reference_twist(
-                edges, sign, a1, self.__tangent, self.__undef_ref_twist
-            )
-        else:
-            self.__undef_ref_twist = np.array([])
-            ref_twist = np.array([])
-
-        self.__state = RobotState.init(self.__q0, a1, a2, m1, m2, ref_twist)
-
-    def _init_fixed_dof(self):
-        """Initialize all DOF as free"""
-        self.__fixed_nodes = np.array([], dtype=np.int64)
-        self.__fixed_edges = np.array([], dtype=np.int64)
-
-        self.__fixed_dof, self.__free_dof = self._find_fixed_free_dof(
-            self.__fixed_nodes, self.__fixed_edges)
-
-    def _init_directors_and_springs(self, geo: Geometry):
-        """Initialize spring list objects"""
-        n_rod = geo.rod_stretch_springs.shape[0]
-
-        # Stretch springs
-        rod_springs = [StretchSpring(spring, self.ref_len[i], self)
-                       for i, spring in enumerate(geo.rod_stretch_springs)]
-        shell_springs = [StretchSpring(spring, self.ref_len[i + n_rod], self, self.__ks[i + n_rod])
-                         for i, spring in enumerate(geo.shell_stretch_springs)]
-        self.__stretch_springs = rod_springs + shell_springs
-
-        self.__bend_twist_springs = [
-            BendTwistSpring(
-                spring, sign, np.array([0, 0]), undef_ref_twist, self)
-            for spring, sign, undef_ref_twist in zip(geo.bend_twist_springs, geo.bend_twist_signs, self.__undef_ref_twist)
-        ]
-
-        # Hinge springs
-        self.__shell_hinge_springs = [
-            HingeSpring(spring, self) for spring in geo.hinges
-        ]
-
-        # TODO: Move this functionality into bend_twist_spring init
-        # Set initial spring parameters
-        self._set_kappa(self.state.m1, self.state.m2)
-        # Mid-edge?
 
     @staticmethod
     def _construct_edge_combinations(edges: np.ndarray) -> np.ndarray:
@@ -242,6 +243,29 @@ class SoftRobot:
         t, f, c = self._batch_init_tfc_midedge(all_p_is, all_tau0_is, signs)
 
         return t.transpose(1, 2, 0), f.T, c.T, all_xi_is.T
+
+    def _update_pre_comp_shell(self, q: np.ndarray) -> np.ndarray:
+        faces = self.__face_nodes_shell
+        face_edges = self.__face_edges
+
+        # Compute face normals
+        v1 = q[3*faces[:, 1]] - q[3*faces[:, 0]]
+        v2 = q[3*faces[:, 2]] - q[3*faces[:, 1]]
+        face_normals = np.cross(v1, v2)
+        face_normals /= np.linalg.norm(face_normals, axis=1, keepdims=True)
+
+        # Accumulate edge normals
+        edge_normals = np.zeros((self.__n_edges, 3))
+        np.add.at(edge_normals, face_edges.ravel(),
+                  face_normals.repeat(3, axis=0))
+        edge_counts = np.bincount(face_edges.ravel(), minlength=self.__n_edges)
+        edge_normals /= edge_counts[:, None] + 1e-10
+
+        # Compute edge vectors and tau_0
+        edge_vecs = q[3*self.__edges[:, 1]] - q[3*self.__edges[:, 0]]
+        tau_0 = np.cross(edge_vecs, edge_normals)
+        tau_0 /= np.linalg.norm(tau_0, axis=1, keepdims=True)
+        return tau_0.T
 
     @staticmethod
     def _batch_init_tfc_midedge(p_s: np.ndarray, tau0_s: np.ndarray, s_s: np.ndarray) -> typing.Tuple[np.ndarray, ...]:
@@ -317,54 +341,11 @@ class SoftRobot:
         for i, spring in enumerate(self.__bend_twist_springs):
             spring.kappa_bar = np.array([kappa1[i], kappa2[i]])
 
-    def compute_material_directors(self, q: np.ndarray, a1: np.ndarray, a2: np.ndarray) -> typing.Tuple[np.ndarray, np.ndarray]:
-        theta = self.get_theta(q)
-        cos_theta = np.cos(theta)[:, None]
-        sin_theta = np.sin(theta)[:, None]
-        m1 = cos_theta * a1 + sin_theta * a2
-        m2 = -sin_theta * a1 + cos_theta * a2
-        return m1, m2
-
-    @staticmethod
-    def compute_reference_twist(springs: typing.List[BendTwistSpring],
-                                a1: np.ndarray, tangent: np.ndarray,
-                                ref_twist: np.ndarray) -> np.ndarray:
-        if len(springs) == 0:
-            return np.array([])
-
-        edges = np.array([s.edges_ind for s in springs])
-        sgn = np.array([s.sgn for s in springs])
-
-        return compute_reference_twist(edges, sgn, a1, tangent, ref_twist)
-
-    def _update_pre_comp_shell(self, q: np.ndarray) -> np.ndarray:
-        faces = self.__face_nodes_shell
-        face_edges = self.__face_edges
-
-        # Compute face normals
-        v1 = q[3*faces[:, 1]] - q[3*faces[:, 0]]
-        v2 = q[3*faces[:, 2]] - q[3*faces[:, 1]]
-        face_normals = np.cross(v1, v2)
-        face_normals /= np.linalg.norm(face_normals, axis=1, keepdims=True)
-
-        # Accumulate edge normals
-        edge_normals = np.zeros((self.__n_edges, 3))
-        np.add.at(edge_normals, face_edges.ravel(),
-                  face_normals.repeat(3, axis=0))
-        edge_counts = np.bincount(face_edges.ravel(), minlength=self.__n_edges)
-        edge_normals /= edge_counts[:, None] + 1e-10
-
-        # Compute edge vectors and tau_0
-        edge_vecs = q[3*self.__edges[:, 1]] - q[3*self.__edges[:, 0]]
-        tau_0 = np.cross(edge_vecs, edge_normals)
-        tau_0 /= np.linalg.norm(tau_0, axis=1, keepdims=True)
-        return tau_0.T
-
     def compute_space_parallel(self) -> typing.Tuple[np.ndarray, np.ndarray]:
         a1 = np.zeros((self.__n_edges_dof, 3))
         a2 = np.zeros((self.__n_edges_dof, 3))
 
-        self.__tangent = self.compute_tangent(self.__q0)
+        self.__tangent = self._compute_tangent(self.__q0)
 
         if self.__tangent.size:
             # Initialize first a1
@@ -386,7 +367,43 @@ class SoftRobot:
                 a2[i] = np.cross(t_curr, a1[i])
         return a1, a2
 
-    def compute_tangent(self, q: np.ndarray) -> np.ndarray:
+    def compute_time_parallel(self, a1_old: np.ndarray, q0: np.ndarray, q: np.ndarray) -> typing.Tuple[np.ndarray, np.ndarray]:
+        tangent0 = self._compute_tangent(q0)
+        tangent = self._compute_tangent(q)
+
+        a1_transported = parallel_transport(
+            a1_old, tangent0, tangent)
+
+        # Orthonormalization
+        t_dot = np.einsum('ij,ij->i', a1_transported, tangent)
+        a1 = a1_transported - tangent * t_dot[:, None]
+        a1 /= np.linalg.norm(a1, axis=1, keepdims=True)
+        a2 = np.cross(tangent, a1)
+
+        return a1, a2
+    
+    def compute_material_directors(self, q: np.ndarray, a1: np.ndarray, a2: np.ndarray) -> typing.Tuple[np.ndarray, np.ndarray]:
+        theta = q[3*self.__n_nodes: 3*self.__n_nodes + self.__n_edges_dof]
+        cos_theta = np.cos(theta)[:, None]
+        sin_theta = np.sin(theta)[:, None]
+        m1 = cos_theta * a1 + sin_theta * a2
+        m2 = -sin_theta * a1 + cos_theta * a2
+        return m1, m2
+
+    def compute_reference_twist(self,
+                                springs: typing.List[BendTwistSpring],
+                                q:np.ndarray,
+                                a1: np.ndarray,
+                                ref_twist: np.ndarray) -> np.ndarray:
+        if len(springs) == 0:
+            return np.array([])
+
+        edges = np.array([s.edges_ind for s in springs])
+        sgn = np.array([s.sgn for s in springs])
+
+        return compute_reference_twist(edges, sgn, a1, self._compute_tangent(q), ref_twist)
+
+    def _compute_tangent(self, q: np.ndarray) -> np.ndarray:
         edges = self.__edges[:self.__n_edges_dof]
         n0 = edges[:, 0]
         n1 = edges[:, 1]
@@ -400,20 +417,30 @@ class SoftRobot:
 
         return tangent
 
-    def compute_time_parallel(self, a1_old: np.ndarray, q0: np.ndarray, q: np.ndarray) -> typing.Tuple[np.ndarray, np.ndarray]:
-        tangent0 = self.compute_tangent(q0)
-        tangent = self.compute_tangent(q)
+    def free_nodes(self, nodes: np.ndarray, nodes_dof: np.ndarray | None = None, free_edges: bool = True) -> "SoftRobot":
+        """ Return a SoftRobot object with freed nodes. If nodes is None, all nodes and edges are freed """
+        # remove all nodes, or specified ones
+        if nodes is None:
+            new_fixed_nodes = np.empty(0)
+        else:
+            mask = np.isin(self.__fixed_nodes, nodes, invert=True)
+            new_fixed_nodes = self.__fixed_nodes[mask]
 
-        a1_transported = parallel_transport(
-            a1_old, tangent0, tangent)
+        # only recalculate edges if free_edges is true
+        return self._fix_nodes(new_fixed_nodes, nodes_dof, free_edges)
 
-        # Orthonormalization
-        t_dot = np.einsum('ij,ij->i', a1_transported, tangent)
-        a1 = a1_transported - tangent * t_dot[:, None]
-        a1 /= np.linalg.norm(a1, axis=1, keepdims=True)
-        a2 = np.cross(tangent, a1)
+    def fix_nodes(self, nodes: np.ndarray, nodes_dof: np.ndarray | None = None, fix_edges: bool = True) -> "SoftRobot":
+        """ Return a SoftRobot object with additional fixed nodes """
+        return self._fix_nodes(np.union1d(nodes, self.__fixed_nodes), nodes_dof, fix_edges)
 
-        return a1, a2
+    def _fix_nodes(self, nodes, node_dof, fix_edges):
+        ret = copy.copy(self)
+        ret.__fixed_nodes = nodes
+        if fix_edges:
+            ret.__fixed_edges = ret._get_fixed_edges(ret.__fixed_nodes)
+        ret.__fixed_dof, ret.__free_dof = ret._find_fixed_free_dof(
+            ret.__fixed_nodes, ret.__fixed_edges)
+        return ret
 
     def _find_fixed_free_dof(self, fixed_nodes: typing.List[int], fixed_edges: typing.List[int]) -> typing.Tuple[np.ndarray, np.ndarray]:
         # Vectorized node DOF mapping
@@ -446,37 +473,12 @@ class SoftRobot:
 
         return fixed_edge_indices
 
-    def free_nodes(self, nodes: np.ndarray, fix_edges: bool = True) -> "SoftRobot":
-        """ Return a SoftRobot object with freed nodes. If nodes is None, all nodes and edges are freed """
-        # remove all nodes, or specified ones
-        if nodes is None:
-            new_fixed_nodes = np.empty(0)
-        else:
-            mask = np.isin(self.__fixed_nodes, nodes, invert=True)
-            new_fixed_nodes = self.__fixed_nodes[mask]
-
-        return self.fix_nodes(new_fixed_nodes, fix_edges)
-
-    def fix_nodes(self, nodes: np.ndarray, fix_edges: bool = True) -> "SoftRobot":
-        """ Return a SoftRobot object with new fixed nodes """
-        ret = copy.copy(self)
-        ret.__fixed_nodes = np.union1d(nodes, ret.__fixed_nodes)
-        if fix_edges:
-            ret.__fixed_edges = ret._get_fixed_edges(ret.__fixed_nodes)
-        ret.__fixed_dof, ret.__free_dof = ret._find_fixed_free_dof(
-            ret.__fixed_nodes, ret.__fixed_edges)
-        return ret
-
     def update(self, **kwargs) -> "SoftRobot":
         """Return a new SoftRobot with updated state"""
         new_robot = copy.copy(self)
         new_robot.__state = dataclasses.replace(
             self.__state, **{k: v.copy() for k, v in kwargs.items()})
         return new_robot
-
-    def get_theta(self, q: np.ndarray) -> np.ndarray:
-        """ All DOF for edges (self.__n_edges_dof,)"""
-        return q[3*self.__n_nodes: 3*self.__n_nodes + self.__n_edges_dof]
 
     @property
     def n_dof(self) -> int:

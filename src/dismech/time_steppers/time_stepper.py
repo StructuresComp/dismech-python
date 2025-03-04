@@ -139,7 +139,7 @@ class TimeStepper(metaclass=abc.ABCMeta):
         a1_iter, a2_iter = robot.compute_time_parallel(robot.state.a1, q0, q)
         m1, m2 = robot.compute_material_directors(q, a1_iter, a2_iter)
         ref_twist = robot.compute_reference_twist(
-            robot.bend_twist_springs, a1_iter, robot.compute_tangent(q), robot.state.ref_twist)
+            robot.bend_twist_springs, q, a1_iter, robot.state.ref_twist)
 
         # Add elastic forces
         for energy in self.__elastic_energies:
@@ -184,5 +184,5 @@ class TimeStepper(metaclass=abc.ABCMeta):
         a1, a2 = robot.compute_time_parallel(robot.state.a1, robot.state.q, q)
         m1, m2 = robot.compute_material_directors(q, a1, a2)
         ref_twist = robot.compute_reference_twist(
-            robot.bend_twist_springs, a1, robot.compute_tangent(q), robot.state.ref_twist)
+            robot.bend_twist_springs, q, a1, robot.state.ref_twist)
         return robot.update(q=q, u=u, a=a, a1=a1, a2=a2, m1=m1, m2=m2, ref_twist=ref_twist)

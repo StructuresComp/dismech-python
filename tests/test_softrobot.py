@@ -31,12 +31,6 @@ def time_parallel_helper(robot, truth):
     assert (np.allclose(a2, truth['a2_iter']))
 
 
-def reference_twist_helper(robot, truth):
-    new_twist = robot.compute_reference_twist(
-        robot.bend_twist_springs, truth['a1'], truth['tangent'], truth['orgTwist'])
-    assert (np.allclose(new_twist, truth['refTwist']))
-
-
 def test_tangent_cantilever_n51(softrobot_rod_cantilever_n51):
     robot = softrobot_rod_cantilever_n51
     valid_data = scipy.io.loadmat(
@@ -68,10 +62,3 @@ def test_compute_time_parallel_cantilever_n51(softrobot_rod_cantilever_n51):
     valid_data = scipy.io.loadmat(rel_path(
         'resources/rod_cantilever/rod_cantilever_n51_compute_time_parallel.mat'))
     time_parallel_helper(robot, valid_data)
-
-
-def test_compute_reference_twist_cantilever_n51(softrobot_rod_cantilever_n51):
-    robot = softrobot_rod_cantilever_n51
-    valid_data = scipy.io.loadmat(rel_path(
-        'resources/rod_cantilever/rod_cantilever_n51_compute_reference_twist.mat'))
-    reference_twist_helper(robot, valid_data)

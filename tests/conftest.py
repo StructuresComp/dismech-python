@@ -100,19 +100,19 @@ def time_stepper_contortion_n21(softrobot_contortion_n21):
     start_points = np.array(np.where(
         softrobot_contortion_n21.state.q[softrobot_contortion_n21.node_dof_indices].reshape(-1, 3)[:, 0] <= start)[0])
 
-    def move_and_twist(robot, t):
+    softrobot_contortion_n21.fix_nodes(np.union1d(start_points, end_points))
+
+    def move_and_twist(robot: dismech.SoftRobot, t: float):
         """ Simple example of a moving boundary condition """
         u0 = 0.1
         w0 = 2
 
-        # Cannot modify robot.state (throws error)
-        q = robot.state.q
         if t < 0.15:
-            q[robot.map_node_to_dof(start_points)[:, 0]
-              ] += u0 * robot.sim_params.dt
+            # 0 = x, 1 = y, 2 = z
+            robot = robot.move_nodes(start_points, u0 * robot.sim_params.dt, 0)
         else:
-            q[63:65] += w0 * robot.sim_params.dt
-        return robot.update(q=q)
+            robot = robot.twist_edges([0, 1], w0 * robot.sim_params.dt)
+        return robot
 
     stepper = dismech.ImplicitEulerTimeStepper(softrobot_contortion_n21)
     stepper.before_step = move_and_twist

@@ -365,26 +365,26 @@ class SoftRobot:
         tangent[np.abs(tangent) < _TANGENT_THRESHOLD] = 0
 
         return tangent
-    
+
     # Fix/free nodes and edges
 
-    def free_nodes(self, nodes: np.ndarray, dof: np.ndarray | None = None, fix_edges: bool = True) -> "SoftRobot":
+    def free_nodes(self, nodes: typing.List[int] | np.ndarray, axis: int | None = None, fix_edges: bool = True) -> "SoftRobot":
         new_dof = np.setdiff1d(self.fixed_dof, self._get_node_dof_mask(
-            nodes, dof), assume_unique=True)
+            nodes, axis), assume_unique=True)
         if fix_edges:
             new_dof = np.setdiff1d(
                 new_dof, self._get_intermediate_edge_dof(nodes), assume_unique=True)
         return self._fix_dof(new_dof)
 
-    def fix_nodes(self, nodes: np.ndarray, dof: np.ndarray | None = None, fix_edges: bool = True) -> "SoftRobot":
+    def fix_nodes(self, nodes: typing.List[int] | np.ndarray, axis: int | None = None, fix_edges: bool = True) -> "SoftRobot":
         new_dof = np.union1d(
-            self.fixed_dof, self._get_node_dof_mask(nodes, dof))
+            self.fixed_dof, self._get_node_dof_mask(nodes, axis))
         if fix_edges:
             new_dof = np.union1d(
                 new_dof, self._get_intermediate_edge_dof(nodes))
         return self._fix_dof(new_dof)
 
-    def free_edges(self, edges: np.ndarray) -> "SoftRobot":
+    def free_edges(self, edges: typing.List[int] | np.ndarray) -> "SoftRobot":
         new_dof = np.setdiff1d(
             self.fixed_dof, self._get_edge_dof(edges), assume_unique=True)
         return self._fix_dof(new_dof)
@@ -397,10 +397,10 @@ class SoftRobot:
         return copy.copy(self).update(free_dof=np.setdiff1d(np.arange(self.__n_dof), new_fixed_dof, assume_unique=True))
 
     @staticmethod
-    def _get_node_dof_mask(nodes: np.ndarray, dof: np.ndarray | None = None):
+    def _get_node_dof_mask(nodes: typing.List[int] | np.ndarray, axis: int | None = None):
         """Masked get_node_dof for fixing specific axes """
         node_dof = SoftRobot.map_node_to_dof(nodes)
-        return (node_dof if dof is None else node_dof[dof]).ravel()
+        return (node_dof if axis is None else node_dof[:,axis]).ravel()
 
     def _get_intermediate_edge_dof(self, nodes: np.ndarray) -> np.ndarray:
         # Add edges in between fixed nodes
@@ -415,6 +415,18 @@ class SoftRobot:
 
         return self.map_edge_to_dof(edges)
 
+    # Perturb system
+
+    def move_nodes(self, nodes: typing.List[int] | np.ndarray, perturbation: np.ndarray, axis: int | None = None):
+        q = self.state.q
+        q[self._get_node_dof_mask(nodes, axis)] += perturbation
+        return self.update(q)
+
+    def twist_edges(self, edges: typing.List[int] | np.ndarray, perturbation: np.ndarray):
+        q = self.state.q
+        q[self.map_edge_to_dof(edges)] += perturbation
+        return self.update(q)
+
     # Utility
 
     @staticmethod
@@ -424,11 +436,25 @@ class SoftRobot:
     def map_edge_to_dof(self, edge_nums: typing.Union[int, np.ndarray]) -> np.ndarray:
         return 3 * self.__n_nodes + np.asarray(edge_nums)
 
-    def update(self, **kwargs) -> "SoftRobot":
+    def update(
+        self,
+        q: np.ndarray = None,
+        u: np.ndarray = None,
+        a: np.ndarray = None,
+        a1: np.ndarray = None,
+        a2: np.ndarray = None,
+        m1: np.ndarray = None,
+        m2: np.ndarray = None,
+        ref_twist: np.ndarray = None,
+        free_dof: np.ndarray = None
+    ) -> "SoftRobot":
         """Return a new SoftRobot with updated state"""
+        state_updates = {
+            k: v.copy() for k, v in locals().items()
+            if k != "self" and v is not None
+        }
         new_robot = copy.copy(self)
-        new_robot.__state = dataclasses.replace(
-            self.__state, **{k: v.copy() for k, v in kwargs.items()})
+        new_robot.__state = dataclasses.replace(self.__state, **state_updates)
         return new_robot
 
     # Parameters

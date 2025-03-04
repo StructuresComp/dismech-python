@@ -396,12 +396,6 @@ class SoftRobot:
     def _fix_dof(self, new_fixed_dof):
         return copy.copy(self).update(free_dof=np.setdiff1d(np.arange(self.__n_dof), new_fixed_dof, assume_unique=True))
 
-    @staticmethod
-    def _get_node_dof_mask(nodes: typing.List[int] | np.ndarray, axis: int | None = None):
-        """Masked get_node_dof for fixing specific axes """
-        node_dof = SoftRobot.map_node_to_dof(nodes)
-        return (node_dof if axis is None else node_dof[:,axis]).ravel()
-
     def _get_intermediate_edge_dof(self, nodes: np.ndarray) -> np.ndarray:
         # Add edges in between fixed nodes
         edge_mask = np.isin(self.__edges[:, 0], nodes) & np.isin(
@@ -428,6 +422,12 @@ class SoftRobot:
         return self.update(q)
 
     # Utility
+
+    @staticmethod
+    def _get_node_dof_mask(nodes: typing.List[int] | np.ndarray, axis: int | None = None):
+        """Masked get_node_dof for fixing specific axes """
+        node_dof = SoftRobot.map_node_to_dof(nodes)
+        return (node_dof if axis is None else node_dof[:,axis]).ravel()
 
     @staticmethod
     def map_node_to_dof(node_nums: typing.Union[int, np.ndarray], mask=None) -> np.ndarray:

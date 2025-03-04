@@ -110,22 +110,34 @@ class SoftRobot:
         n_rod = geo.rod_stretch_springs.shape[0]
 
         # Stretch springs
-        rod_springs = [StretchSpring(spring, self.ref_len[i], self.__EA, self)
+        rod_springs = [StretchSpring(spring,
+                                     self.__ref_len[i],
+                                     self.__EA,
+                                     self.map_node_to_dof)
                        for i, spring in enumerate(geo.rod_stretch_springs)]
-        shell_springs = [StretchSpring(spring, self.ref_len[i+n_rod], self.__ks[i + n_rod], self)
+        shell_springs = [StretchSpring(spring,
+                                       self.__ref_len[i+n_rod],
+                                       self.__ks[i + n_rod],
+                                       self.map_node_to_dof)
                          for i, spring in enumerate(geo.shell_stretch_springs)]
         self.__stretch_springs = rod_springs + shell_springs
 
         self.__bend_twist_springs = [
-            BendTwistSpring(
-                spring, sign, np.array([self.__EI1, self.__EI2]), self.__GJ, self)
-            for spring, sign in zip(geo.bend_twist_springs, geo.bend_twist_signs)
-        ]
+            BendTwistSpring(spring,
+                            sign,
+                            self.__ref_len,
+                            np.array([self.__EI1, self.__EI2]),
+                            self.__GJ,
+                            self.map_node_to_dof,
+                            self.map_edge_to_dof)
+            for spring, sign in zip(geo.bend_twist_springs, geo.bend_twist_signs)]
 
         # Hinge springs
         self.__shell_hinge_springs = [
-            HingeSpring(spring, self.__kb, self) for spring in geo.hinges
-        ]
+            HingeSpring(spring,
+                        self.__kb,
+                        self.map_node_to_dof)
+            for spring in geo.hinges]
 
     def _get_mass_matrix(self, geom: GeomParams, material: Material) -> np.ndarray:
         mass = np.zeros(self.__n_dof)
@@ -198,13 +210,6 @@ class SoftRobot:
         v2 = self.__nodes[faces[:, 2]] - self.__nodes[faces[:, 1]]
         cross = np.cross(v1, v2)
         return 0.5 * np.linalg.norm(cross, axis=1)
-
-    @staticmethod
-    def map_node_to_dof(node_nums: typing.Union[int, np.ndarray]) -> np.ndarray:
-        return (3 * np.asarray(node_nums))[..., None] + np.array([0, 1, 2])
-
-    def map_edge_to_dof(self, edge_nums: typing.Union[int, np.ndarray]) -> np.ndarray:
-        return 3 * self.__n_nodes + np.asarray(edge_nums)
 
     def scale_mass_matrix(self, nodes: int | np.ndarray, scale: float):
         self.__mass_matrix[np.ix_(self.map_node_to_dof(
@@ -426,13 +431,22 @@ class SoftRobot:
 
         return fixed_edge_indices
 
+    # Utility
+
+    @staticmethod
+    def map_node_to_dof(node_nums: typing.Union[int, np.ndarray]) -> np.ndarray:
+        return (3 * np.asarray(node_nums))[..., None] + np.array([0, 1, 2])
+
+    def map_edge_to_dof(self, edge_nums: typing.Union[int, np.ndarray]) -> np.ndarray:
+        return 3 * self.__n_nodes + np.asarray(edge_nums)
+
     def update(self, **kwargs) -> "SoftRobot":
         """Return a new SoftRobot with updated state"""
         new_robot = copy.copy(self)
         new_robot.__state = dataclasses.replace(
             self.__state, **{k: v.copy() for k, v in kwargs.items()})
         return new_robot
-    
+
     # Parameters
 
     @property
@@ -444,7 +458,6 @@ class SoftRobot:
     def env(self) -> Environment:
         """Environment parameters"""
         return self.__env
-
 
     # Indexing Constants
 

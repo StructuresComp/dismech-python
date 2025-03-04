@@ -2,6 +2,7 @@ import typing
 import numpy as np
 
 from .elastic_energy import ElasticEnergy
+from ..state import RobotState
 from ..springs import HingeSpring
 
 
@@ -92,8 +93,8 @@ class HingeEnergy(ElasticEnergy):
 
         self.temp_block_3d = np.empty((N, 3, 3), dtype=np.float64)
 
-    def get_strain(self, q: np.ndarray, **kwargs) -> np.ndarray:
-        n0p, n1p, n2p, n3p = self._get_node_pos(q)
+    def get_strain(self, state: RobotState) -> np.ndarray:
+        n0p, n1p, n2p, n3p = self._get_node_pos(state.q)
         np.subtract(n1p, n0p, out=self.m_e0)
         np.subtract(n2p, n0p, out=self.m_e1)
         np.subtract(n3p, n0p, out=self.m_e2)
@@ -114,8 +115,8 @@ class HingeEnergy(ElasticEnergy):
 
         return (angle * sign).squeeze(1)
 
-    def grad_hess_strain(self, q: np.ndarray, **kwargs) -> typing.Tuple[np.ndarray, np.ndarray]:
-        n0p, n1p, n2p, n3p = self._get_node_pos(q)
+    def grad_hess_strain(self, state: RobotState) -> typing.Tuple[np.ndarray, np.ndarray]:
+        n0p, n1p, n2p, n3p = self._get_node_pos(state.q)
 
         # Compute edges
         np.subtract(n1p, n0p, out=self.m_e0)

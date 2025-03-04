@@ -2,6 +2,7 @@ import numpy as np
 import typing
 
 from ..springs import BendTwistSpring
+from ..state import RobotState
 from .elastic_energy import ElasticEnergy
 
 
@@ -30,12 +31,12 @@ class TwistEnergy(ElasticEnergy):
         self.theta_e[:] = q[self._edges_ind[:, 0]] * self._sgn[:, 0]
         self.theta_f[:] = q[self._edges_ind[:, 1]] * self._sgn[:, 1]
 
-    def get_strain(self, q: np.ndarray, **kwargs) -> np.ndarray:
-        self._set_thetas(q)
-        return self.theta_f - self.theta_e + kwargs['ref_twist']
+    def get_strain(self, state: RobotState) -> np.ndarray:
+        self._set_thetas(state.q)
+        return self.theta_f - self.theta_e + state.ref_twist
 
-    def grad_hess_strain(self, q: np.ndarray, **kwargs) -> typing.Tuple[np.ndarray, np.ndarray]:
-        n0p, n1p, n2p = self._get_node_pos(q)
+    def grad_hess_strain(self, state: RobotState) -> typing.Tuple[np.ndarray, np.ndarray]:
+        n0p, n1p, n2p = self._get_node_pos(state.q)
         N = n0p.shape[0]  # Number of springs in the batch
 
         # Edge vectors

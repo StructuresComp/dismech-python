@@ -14,7 +14,7 @@ def rel_path(fname: str) -> pathlib.Path:
 
 
 def tangent_helper(robot, q, tangent_truth):
-    tangent = robot.compute_tangent(q)
+    tangent = robot._compute_tangent(q)
     assert (np.allclose(tangent, tangent_truth))
 
 

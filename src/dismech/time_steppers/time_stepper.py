@@ -5,6 +5,7 @@ import typing
 import numpy as np
 
 from ..soft_robot import SoftRobot
+from ..state import RobotState
 from ..elastics import ElasticEnergy, StretchEnergy, HingeEnergy, BendEnergy, TwistEnergy
 from ..external_forces import compute_gravity_forces, compute_aerodynamic_forces_vectorized
 from ..solvers import Solver, NumpySolver, PardisoSolver
@@ -141,10 +142,12 @@ class TimeStepper(metaclass=abc.ABCMeta):
         ref_twist = robot.compute_reference_twist(
             robot.bend_twist_springs, q, a1_iter, robot.state.ref_twist)
 
+        new_state = RobotState.init(q, a1_iter, a2_iter, m1, m2, ref_twist)
+
         # Add elastic forces
         for energy in self.__elastic_energies:
             F, J = energy.grad_hess_energy_linear_elastic(
-                q, **{'m1': m1, 'm2': m2, 'ref_twist': ref_twist})
+                new_state)
             self._forces[:] += F
             self._jacobian[:] += J
 

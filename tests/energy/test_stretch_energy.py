@@ -5,6 +5,7 @@ import scipy
 
 import pathlib
 
+from dismech.state import RobotState
 from dismech.elastics import StretchEnergy
 
 
@@ -15,7 +16,9 @@ def rel_path(fname: str) -> pathlib.Path:
     return pathlib.Path(__file__).parent / fname
 
 def stretch_energy_helper(energy: StretchEnergy, truth):
-    Fs, Js = energy.grad_hess_energy_linear_elastic(truth['q'].flatten())
+    new_state = RobotState.init(truth['q'].flatten(), np.ndarray(
+        []), np.ndarray([]), np.ndarray([]), np.ndarray([]), np.ndarray([]))
+    Fs, Js = energy.grad_hess_energy_linear_elastic(new_state)
     assert (np.allclose(Fs, truth['Fs'].flatten()))
     assert (np.allclose(Js, truth['Js']))
 

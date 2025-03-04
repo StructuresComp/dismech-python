@@ -3,6 +3,7 @@ import abc
 import typing
 
 from ..soft_robot import SoftRobot
+from ..state import RobotState
 
 
 class ElasticEnergy(metaclass=abc.ABCMeta):
@@ -26,9 +27,9 @@ class ElasticEnergy(metaclass=abc.ABCMeta):
         return q[self._node_dof_ind].reshape(self._n_nodes, -1, 3)
 
     # FIXME: Never called so didn't fix
-    def get_energy_linear_elastic(self, q: np.ndarray, **kwargs):
+    def get_energy_linear_elastic(self, state: RobotState):
         # stiffness (with discrete geometry considerations) : unit Nm (same unit as energy)
-        strain = self.get_strain(q, **kwargs)
+        strain = self.get_strain(state)
         del_strain = strain - self._nat_strain
 
         if isinstance(self.K, np.ndarray):  # rod bending
@@ -38,9 +39,9 @@ class ElasticEnergy(metaclass=abc.ABCMeta):
             Energy = 0.5 * del_strain**2
         return Energy
 
-    def grad_hess_energy_linear_elastic(self, q: np.ndarray, **kwargs) -> typing.Tuple[np.ndarray, np.ndarray]:
-        strain = self.get_strain(q, **kwargs)
-        grad_strain, hess_strain = self.grad_hess_strain(q, **kwargs)
+    def grad_hess_energy_linear_elastic(self, state: RobotState) -> typing.Tuple[np.ndarray, np.ndarray]:
+        strain = self.get_strain(state)
+        grad_strain, hess_strain = self.grad_hess_strain(state)
 
         del_strain = strain - self._nat_strain
         gradE_strain = self._K * del_strain
@@ -73,7 +74,7 @@ class ElasticEnergy(metaclass=abc.ABCMeta):
         if (sign_hess := getattr(self, '_sign_hess', None)) is not None:
             hess_energy *= sign_hess
 
-        n_dof = q.shape[0]
+        n_dof = state.q.shape[0]
         Fs = np.zeros(n_dof)
         Js = np.zeros((n_dof, n_dof))
 
@@ -85,9 +86,9 @@ class ElasticEnergy(metaclass=abc.ABCMeta):
         return Fs, Js
 
     @abc.abstractmethod
-    def get_strain(self, q: np.ndarray, **kwargs) -> np.ndarray:
+    def get_strain(self, state: RobotState) -> np.ndarray:
         pass
 
     @abc.abstractmethod
-    def grad_hess_strain(self, q: np.ndarray, **kwargs) -> typing.Tuple[np.ndarray, np.ndarray]:
+    def grad_hess_strain(self, state: RobotState) -> typing.Tuple[np.ndarray, np.ndarray]:
         pass

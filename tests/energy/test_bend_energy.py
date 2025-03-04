@@ -5,6 +5,7 @@ import scipy
 
 import pathlib
 
+from dismech.state import RobotState
 from dismech.elastics import BendEnergy
 
 
@@ -16,8 +17,9 @@ def rel_path(fname: str) -> pathlib.Path:
 
 
 def bend_energy_helper(energy: BendEnergy, truth):
-    Fb, Jb = energy.grad_hess_energy_linear_elastic(
-        truth['q'].flatten(), **{'m1': truth['m1'], 'm2': truth['m2']})
+    new_state = RobotState.init(truth['q'].flatten(), np.ndarray(
+        []), np.ndarray([]), truth['m1'], truth['m2'], np.ndarray([]))
+    Fb, Jb = energy.grad_hess_energy_linear_elastic(new_state)
 
     assert (np.allclose(Fb, truth['Fb'].flatten()))
     assert (np.allclose(Jb, truth['Jb'], rtol=1e-2))

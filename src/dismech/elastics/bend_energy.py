@@ -2,6 +2,7 @@ import numpy as np
 import typing
 
 from ..springs import BendTwistSpring
+from ..state import RobotState
 from .elastic_energy import ElasticEnergy
 
 
@@ -46,9 +47,9 @@ class BendEnergy(ElasticEnergy):
         self.m1f[:] = m1[self._edges_ind[:, 1]]
         self.m2f[:] = m2[self._edges_ind[:, 1]] * self._sgn[:, 1, None]
 
-    def get_strain(self, q: np.ndarray, **kwargs) -> np.ndarray:
-        n0p, n1p, n2p = self._get_node_pos(q)
-        self._set_adjusted_material_directors(kwargs['m1'], kwargs['m2'])
+    def get_strain(self, state: RobotState) -> np.ndarray:
+        n0p, n1p, n2p = self._get_node_pos(state.q)
+        self._set_adjusted_material_directors(state.m1, state.m2)
 
         # Precompute common terms
         np.subtract(n1p, n0p, out=self.ee)
@@ -68,9 +69,9 @@ class BendEnergy(ElasticEnergy):
 
         return self.kappa
 
-    def grad_hess_strain(self, q: np.ndarray, **kwargs) -> typing.Tuple[np.ndarray, np.ndarray]:
-        n0p, n1p, n2p = self._get_node_pos(q)
-        self._set_adjusted_material_directors(kwargs['m1'], kwargs['m2'])
+    def grad_hess_strain(self, state: RobotState) -> typing.Tuple[np.ndarray, np.ndarray]:
+        n0p, n1p, n2p = self._get_node_pos(state.q)
+        self._set_adjusted_material_directors(state.m1, state.m2)
         n_springs = n0p.shape[0]
         Id3 = np.eye(3)[None, :, :]  # For broadcasting
 

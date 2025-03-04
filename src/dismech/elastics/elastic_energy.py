@@ -6,21 +6,35 @@ from ..soft_robot import SoftRobot
 from ..state import RobotState
 
 
-class ElasticEnergy(metaclass=abc.ABCMeta):
+class PostInitABCMeta(abc.ABCMeta):
+    """ Simple metaclass to call post_init after subclass init"""
+    def __call__(cls, *args, **kwargs):
+        obj = super().__call__(*args, **kwargs)
+        obj.__post_init__()
+        return obj
+
+
+class ElasticEnergy(metaclass=PostInitABCMeta):
     """
     Abstract elastic energy class. Objects of this class can be used to calculate the energy of a list of springs.
     """
 
-    def __init__(self, K: np.ndarray, nat_strain: np.ndarray, nodes_ind: np.ndarray, ind: np.ndarray):
+    def __init__(self, K: np.ndarray,
+                 nodes_ind: np.ndarray,
+                 ind: np.ndarray,
+                 initial_state: RobotState):
         self._K = K
         self._n_K = 1 if self._K.ndim == 1 else self._K.shape[1]
-
-        self._nat_strain = nat_strain
-        self._ind = ind
 
         # Get vectorized node indices
         self._node_dof_ind = SoftRobot.map_node_to_dof(nodes_ind.flatten('F'))
         self._n_nodes = nodes_ind.shape[1]
+
+        self._initial_state = initial_state
+        self._ind = ind
+
+    def __post_init__(self):
+        self._nat_strain = self.get_strain(self._initial_state).copy()
 
     def _get_node_pos(self, q: np.ndarray):
         """Return a M x N x 3 matrix """

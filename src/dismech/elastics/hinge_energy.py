@@ -7,12 +7,12 @@ from ..springs import HingeSpring
 
 
 class HingeEnergy(ElasticEnergy):
-    def __init__(self, springs: typing.List[HingeSpring]):
+    def __init__(self, springs: typing.List[HingeSpring], initial_state: RobotState):
         super().__init__(
             np.array([s.kb for s in springs]),
-            np.array([s.theta_bar for s in springs], dtype=np.float64),
             np.array([s.nodes_ind for s in springs]),
-            np.array([s.ind for s in springs])
+            np.array([s.ind for s in springs]),
+            initial_state
         )
 
         N = len(springs)

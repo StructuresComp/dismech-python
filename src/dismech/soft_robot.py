@@ -87,13 +87,12 @@ class SoftRobot:
         sign = np.array([sign for sign in geo.bend_twist_signs])
 
         if edges.size:
-            self.__undef_ref_twist = compute_reference_twist(
+            undef_ref_twist = compute_reference_twist(
                 edges, sign, a1, self.__tangent, np.zeros(sign.shape[0]))
             ref_twist = compute_reference_twist(
-                edges, sign, a1, self.__tangent, self.__undef_ref_twist
+                edges, sign, a1, self.__tangent, undef_ref_twist
             )
         else:
-            self.__undef_ref_twist = np.array([])
             ref_twist = np.array([])
 
         self.__state = RobotState.init(self.__q0, a1, a2, m1, m2, ref_twist)
@@ -111,27 +110,22 @@ class SoftRobot:
         n_rod = geo.rod_stretch_springs.shape[0]
 
         # Stretch springs
-        rod_springs = [StretchSpring(spring, self.ref_len[i], self)
+        rod_springs = [StretchSpring(spring, self.ref_len[i], self.__EA, self)
                        for i, spring in enumerate(geo.rod_stretch_springs)]
-        shell_springs = [StretchSpring(spring, self.ref_len[i + n_rod], self, self.__ks[i + n_rod])
+        shell_springs = [StretchSpring(spring, self.ref_len[i+n_rod], self.__ks[i + n_rod], self)
                          for i, spring in enumerate(geo.shell_stretch_springs)]
         self.__stretch_springs = rod_springs + shell_springs
 
         self.__bend_twist_springs = [
             BendTwistSpring(
-                spring, sign, np.array([0, 0]), undef_ref_twist, self)
-            for spring, sign, undef_ref_twist in zip(geo.bend_twist_springs, geo.bend_twist_signs, self.__undef_ref_twist)
+                spring, sign, np.array([self.__EI1, self.__EI2]), self.__GJ, self)
+            for spring, sign in zip(geo.bend_twist_springs, geo.bend_twist_signs)
         ]
 
         # Hinge springs
         self.__shell_hinge_springs = [
-            HingeSpring(spring, self) for spring in geo.hinges
+            HingeSpring(spring, self.__kb, self) for spring in geo.hinges
         ]
-
-        # TODO: Move this functionality into bend_twist_spring init
-        # Set initial spring parameters
-        self._set_kappa(self.state.m1, self.state.m2)
-        # Mid-edge?
 
     def _get_mass_matrix(self, geom: GeomParams, material: Material) -> np.ndarray:
         mass = np.zeros(self.__n_dof)
@@ -300,47 +294,6 @@ class SoftRobot:
 
         return np.stack((t_i, t_j, t_k), f_vals, np.stack((c_i, c_j, c_k)))
 
-    def _set_kappa(self, m1: np.ndarray, m2: np.ndarray) -> None:
-        """sets natural curvature of all internal bend twist springs"""
-        springs = self.__bend_twist_springs
-
-        if len(springs) == 0:
-            return
-
-        # Precompute all spring data
-        nodes_ind = np.array([s.nodes_ind for s in springs])
-        edges_ind = np.array([s.edges_ind for s in springs])
-        sgn = np.array([s.sgn for s in springs])
-
-        # Get positions for all springs
-        n0_dofs = 3 * nodes_ind[:, 0]
-        n1_dofs = 3 * nodes_ind[:, 1]
-        n2_dofs = 3 * nodes_ind[:, 2]
-        n0_pos = self.__q0[n0_dofs[:, None] + np.arange(3)]
-        n1_pos = self.__q0[n1_dofs[:, None] + np.arange(3)]
-        n2_pos = self.__q0[n2_dofs[:, None] + np.arange(3)]
-
-        # Compute tangents and curvature
-        t0 = (n1_pos - n0_pos) / \
-            np.linalg.norm(n1_pos - n0_pos, axis=1, keepdims=True)
-        t1 = (n2_pos - n1_pos) / \
-            np.linalg.norm(n2_pos - n1_pos, axis=1, keepdims=True)
-        kb = 2.0 * np.cross(t0, t1) / \
-            (1.0 + np.einsum('ij,ij->i', t0, t1))[:, None]
-
-        # Compute kappa values
-        m1e = m1[edges_ind[:, 0]]
-        m2e = sgn[:, 0][:, None] * m2[edges_ind[:, 0]]
-        m1f = m1[edges_ind[:, 1]]
-        m2f = sgn[:, 1][:, None] * m2[edges_ind[:, 1]]
-
-        kappa1 = 0.5 * np.einsum('ij,ij->i', kb, m2e + m2f)
-        kappa2 = -0.5 * np.einsum('ij,ij->i', kb, m1e + m1f)
-
-        # Update springs in bulk
-        for i, spring in enumerate(self.__bend_twist_springs):
-            spring.kappa_bar = np.array([kappa1[i], kappa2[i]])
-
     def compute_space_parallel(self) -> typing.Tuple[np.ndarray, np.ndarray]:
         a1 = np.zeros((self.__n_edges_dof, 3))
         a2 = np.zeros((self.__n_edges_dof, 3))
@@ -381,7 +334,7 @@ class SoftRobot:
         a2 = np.cross(tangent, a1)
 
         return a1, a2
-    
+
     def compute_material_directors(self, q: np.ndarray, a1: np.ndarray, a2: np.ndarray) -> typing.Tuple[np.ndarray, np.ndarray]:
         theta = q[3*self.__n_nodes: 3*self.__n_nodes + self.__n_edges_dof]
         cos_theta = np.cos(theta)[:, None]
@@ -392,7 +345,7 @@ class SoftRobot:
 
     def compute_reference_twist(self,
                                 springs: typing.List[BendTwistSpring],
-                                q:np.ndarray,
+                                q: np.ndarray,
                                 a1: np.ndarray,
                                 ref_twist: np.ndarray) -> np.ndarray:
         if len(springs) == 0:
@@ -479,6 +432,21 @@ class SoftRobot:
         new_robot.__state = dataclasses.replace(
             self.__state, **{k: v.copy() for k, v in kwargs.items()})
         return new_robot
+    
+    # Parameters
+
+    @property
+    def sim_params(self) -> SimParams:
+        """Simulation parameters"""
+        return self.__sim_params
+
+    @property
+    def env(self) -> Environment:
+        """Environment parameters"""
+        return self.__env
+
+
+    # Indexing Constants
 
     @property
     def n_dof(self) -> int:
@@ -495,6 +463,8 @@ class SoftRobot:
         """First edge DOF index after node DOFs"""
         return 3 * self.__n_nodes
 
+    # States
+
     @property
     def q0(self) -> np.ndarray:
         """Initial state vector (n_dof,)"""
@@ -504,6 +474,8 @@ class SoftRobot:
     def state(self) -> RobotState:
         """Return current state"""
         return self.__state
+
+    # Springs
 
     @property
     def bend_twist_springs(self) -> typing.List[BendTwistSpring]:
@@ -520,6 +492,13 @@ class SoftRobot:
         """List of hinge spring elements"""
         return self.__shell_hinge_springs
 
+    # Geometric relationships (for visualizing)
+
+    @property
+    def nodes(self) -> np.ndarray:
+        """Nodes (n_nodes,)"""
+        return self.__nodes.view()
+
     @property
     def edges(self) -> np.ndarray:
         """Edges (n_edges, 2)"""
@@ -530,45 +509,7 @@ class SoftRobot:
         """Shell face node indices (n_faces, 3)"""
         return self.__face_nodes_shell.view()
 
-    @property
-    def EA(self) -> float:
-        """Axial stiffness"""
-        return self.__EA
-
-    @property
-    def EI1(self) -> float:
-        """First bending stiffness"""
-        return self.__EI1
-
-    @property
-    def EI2(self) -> float:
-        """Second bending stiffness"""
-        return self.__EI2
-
-    @property
-    def GJ(self) -> float:
-        """Torsional stiffness"""
-        return self.__GJ
-
-    @property
-    def kb(self) -> float:
-        """Hinge stiffness"""
-        return self.__kb
-
-    @property
-    def sim_params(self) -> SimParams:
-        """Simulation parameters object"""
-        return self.__sim_params
-
-    @property
-    def env(self) -> Environment:
-        """Environment parameters object"""
-        return self.__env
-
-    @property
-    def mass_matrix(self) -> np.ndarray:
-        """Diagonal mass matrix (n_dof, n_dof)"""
-        return self.__mass_matrix.view()
+    # Geometric constants
 
     @property
     def ref_len(self) -> np.ndarray:
@@ -586,9 +527,9 @@ class SoftRobot:
         return self.__face_area.view()
 
     @property
-    def undef_ref_twist(self) -> np.ndarray:
-        """Initial reference twist values (n_bend_twist_springs,)"""
-        return self.__undef_ref_twist.view()
+    def mass_matrix(self) -> np.ndarray:
+        """Diagonal mass matrix (n_dof, n_dof)"""
+        return self.__mass_matrix.view()
 
     @property
     def fixed_nodes(self) -> np.ndarray:

@@ -5,13 +5,11 @@ class BendTwistSpring:
     def __init__(self,
                  nodes_edges_index: np.ndarray,
                  signs: np.ndarray,
-                 kappa_bar: np.ndarray,
-                 undef_ref_twist: float,
-                 robot,
-                 EI: np.ndarray = None,
-                 GJ: float = None):
-        self.stiff_EI = EI or [robot.EI1, robot.EI2]
-        self.stiff_GJ = GJ or robot.GJ
+                 EI: np.ndarray,
+                 GJ: float,
+                 robot):
+        self.stiff_EI = EI
+        self.stiff_GJ = GJ
 
         # N e N e N
         self.nodes_ind = [int(nodes_edges_index[0]), int(
@@ -30,5 +28,3 @@ class BendTwistSpring:
         self.voronoi_len = 0.5 * \
             (robot.ref_len[self.edges_ind[0]] +
              robot.ref_len[self.edges_ind[1]])
-        self.kappa_bar = kappa_bar
-        self.undef_ref_twist = undef_ref_twist

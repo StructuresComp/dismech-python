@@ -7,11 +7,11 @@ from .elastic_energy import ElasticEnergy
 
 
 class TwistEnergy(ElasticEnergy):
-    def __init__(self, springs: typing.List[BendTwistSpring]):
+    def __init__(self, springs: typing.List[BendTwistSpring], initial_state: RobotState):
         super().__init__(np.array([s.stiff_GJ / s.voronoi_len for s in springs]),
-                         np.array([s.undef_ref_twist for s in springs]),
                          np.array([s.nodes_ind for s in springs]),
-                         np.array([s.ind for s in springs]))
+                         np.array([s.ind for s in springs]),
+                         initial_state)
         self._sgn = np.array([s.sgn for s in springs])
         self._edges_ind = np.array([s.ind[-2:] for s in springs])
 
@@ -19,7 +19,7 @@ class TwistEnergy(ElasticEnergy):
 
         # Create sign matrices
         self._sign_grad = np.ones((N, 11))
-        for dof_idx, signs in [(9, self._sgn[:,0]), (10, self._sgn[:,1])]:
+        for dof_idx, signs in [(9, self._sgn[:, 0]), (10, self._sgn[:, 1])]:
             self._sign_grad[:, dof_idx] = signs
         self._sign_hess = self._sign_grad[:, :, None] * \
             self._sign_grad[:, None, :]

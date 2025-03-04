@@ -17,7 +17,7 @@ def rel_path(fname: str) -> pathlib.Path:
 
 
 def hinge_energy_helper(robot, truth):
-    energy = HingeEnergy(robot.hinge_springs)
+    energy = HingeEnergy(robot.hinge_springs, robot.state)
     new_state = RobotState.init(truth['q'].flatten(), np.ndarray(
         []), np.ndarray([]), np.ndarray([]), np.ndarray([]), np.ndarray([]))
     Fb, Jb = energy.grad_hess_energy_linear_elastic(new_state)

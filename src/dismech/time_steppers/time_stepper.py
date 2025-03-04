@@ -24,15 +24,16 @@ class TimeStepper(metaclass=abc.ABCMeta):
         self.__elastic_energies: typing.List[ElasticEnergy] = []
         if robot.stretch_springs:
             self.__elastic_energies.append(
-                StretchEnergy(robot.stretch_springs))
+                StretchEnergy(robot.stretch_springs, robot.state))
         if robot.hinge_springs:
-            self.__elastic_energies.append(HingeEnergy(robot.hinge_springs))
+            self.__elastic_energies.append(
+                HingeEnergy(robot.hinge_springs, robot.state))
         if robot.bend_twist_springs:
             self.__elastic_energies.append(
-                BendEnergy(robot.bend_twist_springs))
+                BendEnergy(robot.bend_twist_springs, robot.state))
             if not robot.sim_params.two_d_sim:   # if 3d
                 self.__elastic_energies.append(
-                    TwistEnergy(robot.bend_twist_springs))
+                    TwistEnergy(robot.bend_twist_springs, robot.state))
 
         # Set solver
         # TODO: figure out how to pass parameters

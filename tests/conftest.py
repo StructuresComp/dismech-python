@@ -153,6 +153,11 @@ def time_stepper_shell_cantilever_n40(softrobot_shell_cantilever_n40):
     robot = softrobot_shell_cantilever_n40.fix_nodes(fixed_points)
     return dismech.ImplicitEulerTimeStepper(robot)
 
+@pytest.fixture
+def softrobot_shell_cantilever_n40_mid_edge(shell_cantilever_geom, shell_cantilever_material, shell_cantilever_n40, dynamic_3d_mid_edge_sim, free_fall_env):
+    return dismech.SoftRobot(shell_cantilever_geom, shell_cantilever_material, shell_cantilever_n40, dynamic_3d_mid_edge_sim, free_fall_env)
+
+
 # parachute
 
 

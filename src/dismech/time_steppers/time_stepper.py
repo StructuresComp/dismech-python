@@ -6,7 +6,7 @@ import numpy as np
 
 from ..soft_robot import SoftRobot
 from ..state import RobotState
-from ..elastics import ElasticEnergy, StretchEnergy, HingeEnergy, BendEnergy, TwistEnergy
+from ..elastics import ElasticEnergy, StretchEnergy, HingeEnergy, BendEnergy, TriangleEnergy, TwistEnergy
 from ..external_forces import compute_gravity_forces, compute_aerodynamic_forces_vectorized
 from ..solvers import Solver, NumpySolver, PardisoSolver
 
@@ -28,6 +28,9 @@ class TimeStepper(metaclass=abc.ABCMeta):
         if robot.hinge_springs:
             self.__elastic_energies.append(
                 HingeEnergy(robot.hinge_springs, robot.state))
+        if robot.triangle_springs:
+            self.__elastic_energies.append(
+                TriangleEnergy(robot.triangle_springs, robot.state))
         if robot.bend_twist_springs:
             self.__elastic_energies.append(
                 BendEnergy(robot.bend_twist_springs, robot.state))

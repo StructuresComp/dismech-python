@@ -67,8 +67,8 @@ def test_ts_cs_fc_xis_cantilever_n51(softrobot_hexparachute_n6_mid_edge):
     robot = softrobot_hexparachute_n6_mid_edge
     valid_data = scipy.io.loadmat(rel_path(
         'resources/parachute/hexparachute_n6_init_ts_cs_fs_xis.mat'))
-    assert(np.allclose(robot._SoftRobot__init_xis, valid_data['init_xis']))
-    assert(np.allclose(robot._SoftRobot__init_ts, valid_data['init_ts']))
+    assert(np.allclose(robot._SoftRobot__init_xis.T, valid_data['init_xis']))
+    assert(np.allclose(robot._SoftRobot__init_ts.transpose(1, 2, 0), valid_data['init_ts']))
     # FIXME: Swapped???
-    assert(np.allclose(robot._SoftRobot__init_fs, valid_data['init_cs']))
-    assert(np.allclose(robot._SoftRobot__init_cs, valid_data['init_fs']))
+    assert(np.allclose(robot._SoftRobot__init_fs.T, valid_data['init_cs']))
+    assert(np.allclose(robot._SoftRobot__init_cs.T, valid_data['init_fs']))

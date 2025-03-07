@@ -1,4 +1,65 @@
+import typing
 import numpy as np
+
+
+# FIXME: using triangle_energy as a template, vectorize this operations (not i,j,k)
+def compute_tfc_midedge(p_s: np.ndarray, tau0_s: np.ndarray, s_s: np.ndarray) -> typing.Tuple[np.ndarray, ...]:
+    # Sign adjust tau0
+    tau = s_s[:, None] * tau0_s
+    tau_i0 = s_s[:, 0][:, None] * tau0_s[:, 0, :]
+    tau_j0 = s_s[:, 1][:, None] * tau0_s[:, 1, :]
+    tau_k0 = s_s[:, 2][:, None] * tau0_s[:, 2, :]
+
+    # Compute edge vectors
+    vi = p_s[:, 2] - p_s[:, 1]
+    vj = p_s[:, 0] - p_s[:, 2]
+    vk = p_s[:, 1] - p_s[:, 0]
+
+    # Compute edge lengths for each triangle in the batch
+    li = np.linalg.norm(vi, axis=1)
+    lj = np.linalg.norm(vj, axis=1)
+    lk = np.linalg.norm(vk, axis=1)
+
+    # Compute the face normal (using the cross product of vk and vi)
+    normal = np.cross(vk, vi)
+    norm_normal = np.linalg.norm(normal, axis=1, keepdims=True)
+    A = norm_normal / 2.0  # area of the triangle face for each batch
+    unit_norm = normal / norm_normal  # normalized face normal for each batch
+
+    # Compute tangent vectors (perpendicular to the edges and in the plane of the triangle)
+    t_i = np.cross(vi, unit_norm)
+    t_j = np.cross(vj, unit_norm)
+    t_k = np.cross(vk, unit_norm)
+
+    # Normalize the tangent vectors before computing dot products
+    t_i_norm = np.linalg.norm(t_i, axis=1, keepdims=True)
+    t_j_norm = np.linalg.norm(t_j, axis=1, keepdims=True)
+    t_k_norm = np.linalg.norm(t_k, axis=1, keepdims=True)
+
+    t_i_normalized = t_i / t_i_norm
+    t_j_normalized = t_j / t_j_norm
+    t_k_normalized = t_k / t_k_norm
+
+    # Compute the dot products needed for the c_i's (one dot per triangle in the batch)
+    dot_i = np.sum(t_i_normalized * tau_i0, axis=1)
+    dot_j = np.sum(t_j_normalized * tau_j0, axis=1)
+    dot_k = np.sum(t_k_normalized * tau_k0, axis=1)
+
+    # Compute scalar coefficients c_i, c_j, c_k
+    c_i = 1.0 / (A.flatten() * li * dot_i)
+    c_j = 1.0 / (A.flatten() * lj * dot_j)
+    c_k = 1.0 / (A.flatten() * lk * dot_k)
+
+    # Compute force components f_i, f_j, f_k as the dot products of the face normal with the scaled tau0 vectors
+    f_i = np.sum(unit_norm * tau_i0, axis=1)
+    f_j = np.sum(unit_norm * tau_j0, axis=1)
+    f_k = np.sum(unit_norm * tau_k0, axis=1)
+
+    fs = np.stack([f_i, f_j, f_k], axis=1)
+    ts = np.stack([t_i, t_j, t_k], axis=1)
+    cs = np.stack([c_i, c_j, c_k], axis=1)
+
+    return ts.transpose(0, 2, 1), fs, cs
 
 
 def compute_reference_twist(edges: np.ndarray,
@@ -120,3 +181,15 @@ def signed_angle(u: np.ndarray, v: np.ndarray, n: np.ndarray) -> np.ndarray:
         sign = sign.squeeze(axis=0)
 
     return angle * sign
+
+
+def construct_edge_combinations(edges: np.ndarray) -> np.ndarray:
+    n = edges.shape[0]
+    if n == 0:
+        return np.array([])
+
+    i, j = np.triu_indices(n, 1)
+    mask = ~np.any((edges[i, None] == edges[j][:, None, :]) | (
+        edges[i, None] == edges[j][:, None, ::-1]), axis=(1, 2))
+    valid = np.column_stack((i[mask], j[mask]))
+    return np.hstack((edges[valid[:, 0]], edges[valid[:, 1]]))

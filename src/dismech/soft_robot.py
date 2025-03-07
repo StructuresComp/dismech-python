@@ -6,7 +6,7 @@ import numpy as np
 
 from .state import RobotState
 from .stiffness import compute_rod_stiffness, compute_shell_stiffness
-from .frame_util import compute_reference_twist, parallel_transport
+from .frame_util import compute_reference_twist, compute_tfc_midedge, parallel_transport
 from .environment import Environment
 from .geometry import Geometry
 from .params import GeomParams, Material, SimParams
@@ -63,8 +63,9 @@ class SoftRobot:
             self.__n_dof += self.__n_edges_shell_only
             self.__q0 = np.concatenate(
                 (self.__q0, np.zeros(self.__n_edges_shell_only)))
-            
-            self.__init_ts, self.__init_fs, self.__init_cs, self.__init_xis = self._init_curvature_midedge(geo)
+
+            self.__init_ts, self.__init_fs, self.__init_cs, self.__init_xis = self._init_curvature_midedge(
+                geo)
         else:
             self.__tau0 = np.empty(0)
             self.__init_ts = np.empty(0)
@@ -83,6 +84,7 @@ class SoftRobot:
             geom, material)
         self.__ks, self.__kb = compute_shell_stiffness(
             geom, material, self.ref_len, self.sim_params.use_mid_edge)
+        self.__nu = material.poisson_shell
 
     def _init_state(self, geo: Geometry):
         """Initialize RobotState state for q0"""
@@ -130,18 +132,42 @@ class SoftRobot:
                             self.map_edge_to_dof)
             for spring, sign in zip(geo.bend_twist_springs, geo.bend_twist_signs)]
 
-        # Hinge springs
-        self.__shell_hinge_springs = [
-            HingeSpring(spring,
-                        self.__kb,
-                        self.map_node_to_dof)
-            for spring in geo.hinges]
-        
-        #Triangle springs
-        self.__triangle_springs = [
-            TriangleSpring(spring, shell_edges, face_edge, sign, self.__ref_len, self.__kb, self.map_node_to_dof, self.map_face_edge_to_dof)
-            for spring, face_edge, shell_edges, sign in zip(geo.face_nodes, geo.face_edges, geo.face_shell_edges, geo.sign_faces)
-        ]
+        if self.__sim_params.use_mid_edge:
+            # Triangle springs
+            self.__triangle_springs = [
+                TriangleSpring(spring,
+                               shell_edges,
+                               face_edge,
+                               sign,
+                               self.__ref_len,
+                               a,
+                               ts,
+                               fs,
+                               cs,
+                               xis,
+                               self.__kb,
+                               self.__nu,
+                               self.map_node_to_dof,
+                               self.map_face_edge_to_dof)
+                for spring, face_edge, shell_edges, sign, a, ts, fs, cs, xis in zip(geo.face_nodes,
+                                                                                    geo.face_edges,
+                                                                                    geo.face_shell_edges,
+                                                                                    geo.sign_faces,
+                                                                                    self.__face_area,
+                                                                                    self.__init_ts,
+                                                                                    self.__init_fs,
+                                                                                    self.__init_cs,
+                                                                                    self.__init_xis)
+            ]
+            self.__shell_hinge_springs = []
+        else:
+            # Hinge springs
+            self.__shell_hinge_springs = [
+                HingeSpring(spring,
+                            self.__kb,
+                            self.map_node_to_dof)
+                for spring in geo.hinges]
+            self.__triangle_springs = []
 
     def _get_mass_matrix(self, geom: GeomParams, material: Material) -> np.ndarray:
         mass = np.zeros(self.__n_dof)
@@ -219,19 +245,7 @@ class SoftRobot:
         self.__mass_matrix[np.ix_(self.map_node_to_dof(
             nodes), self.map_node_to_dof(nodes))] *= scale
 
-    @staticmethod
-    def _construct_edge_combinations(edges: np.ndarray) -> np.ndarray:
-        n = edges.shape[0]
-        if n == 0:
-            return np.array([])
-
-        i, j = np.triu_indices(n, 1)
-        mask = ~np.any((edges[i, None] == edges[j][:, None, :]) | (
-            edges[i, None] == edges[j][:, None, ::-1]), axis=(1, 2))
-        valid = np.column_stack((i[mask], j[mask]))
-        return np.hstack((edges[valid[:, 0]], edges[valid[:, 1]]))
-
-    def _init_curvature_midedge(self, geo:Geometry) -> typing.Tuple[np.ndarray, ...]:
+    def _init_curvature_midedge(self, geo: Geometry) -> typing.Tuple[np.ndarray, ...]:
         self.__face_edges = geo.face_edges
         self.__sign_faces = geo.sign_faces
 
@@ -242,88 +256,35 @@ class SoftRobot:
         all_tau0_is = self.__tau0[:, self.__face_edges].transpose(1, 2, 0)
 
         # Compute t, f, c for all faces simultaneously
-        t, f, c = self._batch_init_tfc_midedge(all_p_is, all_tau0_is, self.__sign_faces)
+        t, f, c = compute_tfc_midedge(all_p_is, all_tau0_is, self.__sign_faces)
 
-        return t.transpose(2, 1, 0), f.T, c.T, all_xi_is.T
+        return t, f, c, all_xi_is
 
-    @staticmethod
-    def _batch_init_tfc_midedge(p_s: np.ndarray, tau0_s: np.ndarray, s_s: np.ndarray) -> typing.Tuple[np.ndarray, ...]:
-        # Sign adjust tau0
-        tau_i0 = s_s[:, 0][:, None] * tau0_s[:, 0, :]
-        tau_j0 = s_s[:, 1][:, None] * tau0_s[:, 1, :]
-        tau_k0 = s_s[:, 2][:, None] * tau0_s[:, 2, :]
-        
-        # Compute edge vectors
-        vi = p_s[:,2] - p_s[:,1]  
-        vj = p_s[:,0] - p_s[:,2]
-        vk = p_s[:,1] - p_s[:,0]
-
-        # Compute edge lengths for each triangle in the batch
-        li = np.linalg.norm(vi, axis=1)
-        lj = np.linalg.norm(vj, axis=1)
-        lk = np.linalg.norm(vk, axis=1)
-        
-        # Compute the face normal (using the cross product of vk and vi)
-        normal = np.cross(vk, vi)
-        norm_normal = np.linalg.norm(normal, axis=1, keepdims=True)
-        A = norm_normal / 2.0  # area of the triangle face for each batch
-        unit_norm = normal / norm_normal  # normalized face normal for each batch
-
-        # Compute tangent vectors (perpendicular to the edges and in the plane of the triangle)
-        t_i = np.cross(vi, unit_norm)
-        t_j = np.cross(vj, unit_norm)
-        t_k = np.cross(vk, unit_norm)
-        
-        # Normalize the tangent vectors before computing dot products
-        t_i_norm = np.linalg.norm(t_i, axis=1, keepdims=True)
-        t_j_norm = np.linalg.norm(t_j, axis=1, keepdims=True)
-        t_k_norm = np.linalg.norm(t_k, axis=1, keepdims=True)
-        
-        t_i_normalized = t_i / t_i_norm
-        t_j_normalized = t_j / t_j_norm
-        t_k_normalized = t_k / t_k_norm
-        
-        # Compute the dot products needed for the c_i's (one dot per triangle in the batch)
-        dot_i = np.sum(t_i_normalized * tau_i0, axis=1)
-        dot_j = np.sum(t_j_normalized * tau_j0, axis=1)
-        dot_k = np.sum(t_k_normalized * tau_k0, axis=1)
-        
-        # Compute scalar coefficients c_i, c_j, c_k
-        c_i = 1.0 / (A.flatten() * li * dot_i)
-        c_j = 1.0 / (A.flatten() * lj * dot_j)
-        c_k = 1.0 / (A.flatten() * lk * dot_k)
-        
-        # Compute force components f_i, f_j, f_k as the dot products of the face normal with the scaled tau0 vectors
-        f_i = np.sum(unit_norm * tau_i0, axis=1)
-        f_j = np.sum(unit_norm * tau_j0, axis=1)
-        f_k = np.sum(unit_norm * tau_k0, axis=1)
-
-        fs = np.stack([f_i, f_j, f_k], axis=1)
-        ts = np.stack([t_i, t_j, t_k], axis=1)
-        cs = np.stack([c_i, c_j, c_k], axis=1)
-        
-        return ts, fs, cs
-    
     def update_pre_comp_shell(self, q: np.ndarray) -> np.ndarray:
         if not self.sim_params.use_mid_edge:
             return np.empty(0)
-        
+
         # Compute face normals
-        v1 = q[self.map_node_to_dof(self.__face_nodes_shell[:, 1])] - q[self.map_node_to_dof(self.__face_nodes_shell[:, 0])]
-        v2 = q[self.map_node_to_dof(self.__face_nodes_shell[:, 2])] - q[self.map_node_to_dof(self.__face_nodes_shell[:, 1])]
+        v1 = q[self.map_node_to_dof(self.__face_nodes_shell[:, 1])] - \
+            q[self.map_node_to_dof(self.__face_nodes_shell[:, 0])]
+        v2 = q[self.map_node_to_dof(self.__face_nodes_shell[:, 2])] - \
+            q[self.map_node_to_dof(self.__face_nodes_shell[:, 1])]
         face_normals = np.cross(v1, v2)
         face_normals /= np.linalg.norm(face_normals, axis=1, keepdims=True)
 
         # Accumulate edge normals
         edge_normals = np.zeros((self.__n_edges, 3))
-        np.add.at(edge_normals, self.__face_edges.ravel(), face_normals.repeat(3, axis=0))
+        np.add.at(edge_normals, self.__face_edges.ravel(),
+                  face_normals.repeat(3, axis=0))
 
         # Normalize edge normals
-        edge_counts = np.bincount(self.__face_edges.ravel(), minlength=self.__n_edges)
+        edge_counts = np.bincount(
+            self.__face_edges.ravel(), minlength=self.__n_edges)
         edge_normals /= edge_counts[:, None] + 1e-10
 
         # Compute edge vectors and tau_0
-        edge_vecs = q[self.map_node_to_dof(self.__edges[:, 1])] - q[self.map_node_to_dof(self.__edges[:, 0])]
+        edge_vecs = q[self.map_node_to_dof(
+            self.__edges[:, 1])] - q[self.map_node_to_dof(self.__edges[:, 0])]
         tau_0 = np.cross(edge_vecs, edge_normals)
         tau_0 /= np.linalg.norm(tau_0, axis=1, keepdims=True) + 1e-10
 
@@ -474,7 +435,7 @@ class SoftRobot:
 
     def map_edge_to_dof(self, edge_nums: int | np.ndarray) -> np.ndarray:
         return 3 * self.__n_nodes + np.asarray(edge_nums)
-    
+
     def map_face_edge_to_dof(self, edge_nums: int | np.ndarray) -> np.ndarray:
         return 3 * self.__n_nodes + self.__n_edges_dof + np.asarray(edge_nums)
 
@@ -556,7 +517,7 @@ class SoftRobot:
     def hinge_springs(self) -> typing.List[HingeSpring]:
         """List of hinge spring elements"""
         return self.__shell_hinge_springs
-    
+
     @property
     def triangle_springs(self) -> typing.List[TriangleSpring]:
         """List of triangle spring elements"""

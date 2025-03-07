@@ -32,7 +32,7 @@ def test_hinge_energy_hexparachute_n6(softrobot_hexparachute_n6):
     hinge_energy_helper(robot, valid_data)
 
 
-def test_hinge_energy_shell_cantilever(softrobot_shell_cantilever_n40):
+def test_hinge_energy_shell_cantilever_n40(softrobot_shell_cantilever_n40):
     robot = softrobot_shell_cantilever_n40
     valid_data = scipy.io.loadmat(
         rel_path('../resources/shell_cantilever/shell_cantilever_n40_get_fb_jb_shell.mat'))

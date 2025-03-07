@@ -221,7 +221,6 @@ class Geometry:
         """
         np.concat does not function properly with empty arrays
         """
-        # TODO: make it general
         arr1, arr2 = arrs
         if arr1.size and arr2.size:
             return np.concat((arr1, arr2), 0)

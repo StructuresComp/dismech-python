@@ -88,13 +88,10 @@ class SoftRobot:
         if edges.size:
             undef_ref_twist = compute_reference_twist(
                 edges, sign, a1, self.__tangent, np.zeros(sign.shape[0]))
-            ref_twist = compute_reference_twist(
-                edges, sign, a1, self.__tangent, undef_ref_twist
-            )
         else:
-            ref_twist = np.array([])
+            undef_ref_twist = np.array([])
 
-        self.__state = RobotState.init(self.__q0, a1, a2, m1, m2, ref_twist)
+        self.__state = RobotState.init(self.__q0, a1, a2, m1, m2, undef_ref_twist)
 
     def _init_springs(self, geo: Geometry):
         """Initialize spring list objects"""

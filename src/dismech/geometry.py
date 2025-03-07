@@ -40,9 +40,9 @@ class Geometry:
         third_node = np.zeros(nEdges, dtype=GEOMETRY_INT)
 
         edge_faces = np.zeros((nEdges, 2), dtype=GEOMETRY_INT)
-        face_shell_edges = np.zeros((n_faces, 3), dtype=GEOMETRY_INT)
         As = np.zeros(n_faces)
 
+        self.__face_shell_edges = np.zeros((n_faces, 3), dtype=GEOMETRY_INT)
         self.__sign_faces = np.zeros((n_faces, 3), dtype=GEOMETRY_INT)
         self.__face_unit_norms = np.zeros((3, n_faces))
 
@@ -76,7 +76,7 @@ class Geometry:
                         not np.any(exist_arr := np.all(shell_edges[:s_i] == edge, axis=1)):
                     shell_edges[s_i, :] = edge
                     third_node[s_i] = n3
-                    face_shell_edges[i, j] = s_i
+                    self.__face_shell_edges[i, j] = s_i
                     self.__sign_faces[i, j] = 1
                     edge_faces[s_i, :] = [i, i]
                     s_i += 1
@@ -87,7 +87,7 @@ class Geometry:
                     existing_edge = shell_edges[exist_id, :]
                     exist_n3 = third_node[exist_id]
                     hinges[h_i, :] = [n1, n2, exist_n3, n3]
-                    face_shell_edges[i, j] = exist_id
+                    self.__face_shell_edges[i, j] = exist_id
 
                     # sign depends on what direction of existing edge
                     if np.array_equiv(existing_edge, edge):
@@ -117,7 +117,7 @@ class Geometry:
             # add any edges that are not already considered
             s_edges = []
             for j in range(len(s_faces)):
-                temp_edges = face_shell_edges[s_faces[j], :]
+                temp_edges = self.__face_shell_edges[s_faces[j], :]
                 for k in range(3):
                     if not np.any(np.all(ghost_rod_shell_joint_edges == shell_edges[temp_edges[k], :], axis=0)):
                         if temp_edges[k] not in s_edges:
@@ -199,7 +199,7 @@ class Geometry:
         self.__shell_stretch_springs = self.__shell_edges
 
         # face edges
-        self.__face_edges = np.zeros((n_faces, 3))
+        self.__face_edges = np.zeros((n_faces, 3), dtype=GEOMETRY_INT)
         for i in range(n_faces):
             n1, n2, n3 = face_nodes[i]
 
@@ -337,6 +337,10 @@ class Geometry:
     @property
     def face_edges(self):
         return self.__face_edges
+    
+    @property
+    def face_shell_edges(self):
+        return self.__face_shell_edges
 
     @property
     def rod_stretch_springs(self):

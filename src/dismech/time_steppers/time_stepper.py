@@ -142,8 +142,9 @@ class TimeStepper(metaclass=abc.ABCMeta):
         m1, m2 = robot.compute_material_directors(q, a1_iter, a2_iter)
         ref_twist = robot.compute_reference_twist(
             robot.bend_twist_springs, q, a1_iter, robot.state.ref_twist)
+        tau = robot.update_pre_comp_shell(q)
 
-        new_state = RobotState.init(q, a1_iter, a2_iter, m1, m2, ref_twist)
+        new_state = RobotState.init(q, a1_iter, a2_iter, m1, m2, ref_twist, tau)
 
         # Add elastic forces
         for energy in self.__elastic_energies:

@@ -180,6 +180,10 @@ def hexparachute_n6():
 def softrobot_hexparachute_n6(hexparachute_n6_geom, hexparachute_n6_material, hexparachute_n6, dynamic_3d_sim, drag_fall_env):
     return dismech.SoftRobot(hexparachute_n6_geom, hexparachute_n6_material, hexparachute_n6, dynamic_3d_sim, drag_fall_env)
 
+@pytest.fixture
+def softrobot_hexparachute_n6_mid_edge(hexparachute_n6_geom, hexparachute_n6_material, hexparachute_n6, dynamic_3d_mid_edge_sim, drag_fall_env):
+    return dismech.SoftRobot(hexparachute_n6_geom, hexparachute_n6_material, hexparachute_n6, dynamic_3d_mid_edge_sim, drag_fall_env)
+
 
 @pytest.fixture
 def time_stepper_hexparachute_n6(softrobot_hexparachute_n6):
@@ -236,6 +240,24 @@ def dynamic_3d_sim():
                              tol=1e-4,
                              ftol=1e-4,
                              dtol=1e-2)
+
+@pytest.fixture
+def dynamic_3d_mid_edge_sim():
+    return dismech.SimParams(static_sim=False,
+                             two_d_sim=False,
+                             use_mid_edge=True,
+                             use_line_search=False,
+                             show_floor=False,
+                             log_data=True,
+                             log_step=1,
+                             dt=1e-2,
+                             max_iter=25,
+                             total_time=3,
+                             plot_step=10,
+                             tol=1e-4,
+                             ftol=1e-4,
+                             dtol=1e-2)
+
 
 # envs
 

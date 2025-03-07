@@ -18,7 +18,7 @@ def rel_path(fname: str) -> pathlib.Path:
 def stretch_energy_helper(robot, truth):
     energy = StretchEnergy(robot.stretch_springs, robot.state)
     new_state = RobotState.init(truth['q'].flatten(), np.ndarray(
-        []), np.ndarray([]), np.ndarray([]), np.ndarray([]), np.ndarray([]))
+        []), np.ndarray([]), np.ndarray([]), np.ndarray([]), np.ndarray([]), np.ndarray([]))
     Fs, Js = energy.grad_hess_energy_linear_elastic(new_state)
     assert (np.allclose(Fs, truth['Fs'].flatten()))
     assert (np.allclose(Js, truth['Js']))

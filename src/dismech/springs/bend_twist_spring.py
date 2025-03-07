@@ -6,7 +6,7 @@ class BendTwistSpring:
     def __init__(self,
                  nodes_edges_index: np.ndarray,
                  signs: np.ndarray,
-                 ref_len: np.ndarray,
+                 ref_len_arr: np.ndarray,
                  EI: np.ndarray,
                  GJ: float,
                  map_node_to_dof: typing.Callable[[np.ndarray], np.ndarray],
@@ -30,5 +30,5 @@ class BendTwistSpring:
             np.array([map_edge_to_dof(self.edges_ind[1])])
         ), axis=0)
 
-        self.voronoi_len = 0.5 * (ref_len[self.edges_ind[0]] +
-                                  ref_len[self.edges_ind[1]])
+        self.voronoi_len = 0.5 * (ref_len_arr[self.edges_ind[0]] +
+                                  ref_len_arr[self.edges_ind[1]])

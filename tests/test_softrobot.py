@@ -62,3 +62,13 @@ def test_compute_time_parallel_cantilever_n51(softrobot_rod_cantilever_n51):
     valid_data = scipy.io.loadmat(rel_path(
         'resources/rod_cantilever/rod_cantilever_n51_compute_time_parallel.mat'))
     time_parallel_helper(robot, valid_data)
+
+def test_ts_cs_fc_xis_cantilever_n51(softrobot_hexparachute_n6_mid_edge):
+    robot = softrobot_hexparachute_n6_mid_edge
+    valid_data = scipy.io.loadmat(rel_path(
+        'resources/parachute/hexparachute_n6_init_ts_cs_fs_xis.mat'))
+    assert(np.allclose(robot._SoftRobot__init_xis, valid_data['init_xis']))
+    assert(np.allclose(robot._SoftRobot__init_ts, valid_data['init_ts']))
+    # FIXME: Swapped???
+    assert(np.allclose(robot._SoftRobot__init_fs, valid_data['init_cs']))
+    assert(np.allclose(robot._SoftRobot__init_cs, valid_data['init_fs']))

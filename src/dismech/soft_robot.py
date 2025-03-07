@@ -10,7 +10,7 @@ from .frame_util import compute_reference_twist, parallel_transport
 from .environment import Environment
 from .geometry import Geometry
 from .params import GeomParams, Material, SimParams
-from .springs import BendTwistSpring, StretchSpring, HingeSpring
+from .springs import BendTwistSpring, StretchSpring, HingeSpring, TriangleSpring
 
 
 _TANGENT_THRESHOLD = 1e-10
@@ -63,6 +63,14 @@ class SoftRobot:
             self.__n_dof += self.__n_edges_shell_only
             self.__q0 = np.concatenate(
                 (self.__q0, np.zeros(self.__n_edges_shell_only)))
+            
+            self.__init_ts, self.__init_fs, self.__init_cs, self.__init_xis = self._init_curvature_midedge(geo)
+        else:
+            self.__tau0 = np.empty(0)
+            self.__init_ts = np.empty(0)
+            self.__init_fs = np.empty(0)
+            self.__init_cs = np.empty(0)
+            self.__init_xis = np.empty(0)
 
         self.__ref_len = self._get_ref_len()
         self.__voronoi_ref_len = self._get_voronoi_ref_len()
@@ -91,7 +99,8 @@ class SoftRobot:
         else:
             undef_ref_twist = np.array([])
 
-        self.__state = RobotState.init(self.__q0, a1, a2, m1, m2, undef_ref_twist)
+        self.__state = RobotState.init(
+            self.__q0, a1, a2, m1, m2, undef_ref_twist, self.__tau0)
 
     def _init_springs(self, geo: Geometry):
         """Initialize spring list objects"""
@@ -110,6 +119,7 @@ class SoftRobot:
                          for i, spring in enumerate(geo.shell_stretch_springs)]
         self.__stretch_springs = rod_springs + shell_springs
 
+        # Bend/twist spring
         self.__bend_twist_springs = [
             BendTwistSpring(spring,
                             sign,
@@ -126,6 +136,12 @@ class SoftRobot:
                         self.__kb,
                         self.map_node_to_dof)
             for spring in geo.hinges]
+        
+        #Triangle springs
+        self.__triangle_springs = [
+            TriangleSpring(spring, shell_edges, face_edge, sign, self.__ref_len, self.__kb, self.map_node_to_dof, self.map_face_edge_to_dof)
+            for spring, face_edge, shell_edges, sign in zip(geo.face_nodes, geo.face_edges, geo.face_shell_edges, geo.sign_faces)
+        ]
 
     def _get_mass_matrix(self, geom: GeomParams, material: Material) -> np.ndarray:
         mass = np.zeros(self.__n_dof)
@@ -215,77 +231,103 @@ class SoftRobot:
         valid = np.column_stack((i[mask], j[mask]))
         return np.hstack((edges[valid[:, 0]], edges[valid[:, 1]]))
 
-    def __init_curvature_midedge(self) -> typing.Tuple[np.ndarray, ...]:
-        faces = self.__face_nodes_shell
-        face_edges = self.__face_edges
-        signs = self.__sign_faces
+    def _init_curvature_midedge(self, geo:Geometry) -> typing.Tuple[np.ndarray, ...]:
+        self.__face_edges = geo.face_edges
+        self.__sign_faces = geo.sign_faces
 
         # Vectorize face processing
-        all_p_is = self.__q0[3 * faces].reshape(-1, 3, 3)
-        all_xi_is = self.__q0[3*self.__n_nodes + face_edges]
-        tau_0 = self._update_pre_comp_shell(self.__q0)
-        all_tau0_is = tau_0[:, face_edges].transpose(1, 0, 2)
+        all_p_is = self.__q0[self.map_node_to_dof(self.__face_nodes_shell)]
+        all_xi_is = self.__q0[self.map_edge_to_dof(self.__face_edges)]
+        self.__tau0 = self.update_pre_comp_shell(self.__q0)
+        all_tau0_is = self.__tau0[:, self.__face_edges].transpose(1, 2, 0)
 
         # Compute t, f, c for all faces simultaneously
-        t, f, c = self._batch_init_tfc_midedge(all_p_is, all_tau0_is, signs)
+        t, f, c = self._batch_init_tfc_midedge(all_p_is, all_tau0_is, self.__sign_faces)
 
-        return t.transpose(1, 2, 0), f.T, c.T, all_xi_is.T
+        return t.transpose(2, 1, 0), f.T, c.T, all_xi_is.T
 
-    def _update_pre_comp_shell(self, q: np.ndarray) -> np.ndarray:
-        faces = self.__face_nodes_shell
-        face_edges = self.__face_edges
+    @staticmethod
+    def _batch_init_tfc_midedge(p_s: np.ndarray, tau0_s: np.ndarray, s_s: np.ndarray) -> typing.Tuple[np.ndarray, ...]:
+        # Sign adjust tau0
+        tau_i0 = s_s[:, 0][:, None] * tau0_s[:, 0, :]
+        tau_j0 = s_s[:, 1][:, None] * tau0_s[:, 1, :]
+        tau_k0 = s_s[:, 2][:, None] * tau0_s[:, 2, :]
+        
+        # Compute edge vectors
+        vi = p_s[:,2] - p_s[:,1]  
+        vj = p_s[:,0] - p_s[:,2]
+        vk = p_s[:,1] - p_s[:,0]
 
+        # Compute edge lengths for each triangle in the batch
+        li = np.linalg.norm(vi, axis=1)
+        lj = np.linalg.norm(vj, axis=1)
+        lk = np.linalg.norm(vk, axis=1)
+        
+        # Compute the face normal (using the cross product of vk and vi)
+        normal = np.cross(vk, vi)
+        norm_normal = np.linalg.norm(normal, axis=1, keepdims=True)
+        A = norm_normal / 2.0  # area of the triangle face for each batch
+        unit_norm = normal / norm_normal  # normalized face normal for each batch
+
+        # Compute tangent vectors (perpendicular to the edges and in the plane of the triangle)
+        t_i = np.cross(vi, unit_norm)
+        t_j = np.cross(vj, unit_norm)
+        t_k = np.cross(vk, unit_norm)
+        
+        # Normalize the tangent vectors before computing dot products
+        t_i_norm = np.linalg.norm(t_i, axis=1, keepdims=True)
+        t_j_norm = np.linalg.norm(t_j, axis=1, keepdims=True)
+        t_k_norm = np.linalg.norm(t_k, axis=1, keepdims=True)
+        
+        t_i_normalized = t_i / t_i_norm
+        t_j_normalized = t_j / t_j_norm
+        t_k_normalized = t_k / t_k_norm
+        
+        # Compute the dot products needed for the c_i's (one dot per triangle in the batch)
+        dot_i = np.sum(t_i_normalized * tau_i0, axis=1)
+        dot_j = np.sum(t_j_normalized * tau_j0, axis=1)
+        dot_k = np.sum(t_k_normalized * tau_k0, axis=1)
+        
+        # Compute scalar coefficients c_i, c_j, c_k
+        c_i = 1.0 / (A.flatten() * li * dot_i)
+        c_j = 1.0 / (A.flatten() * lj * dot_j)
+        c_k = 1.0 / (A.flatten() * lk * dot_k)
+        
+        # Compute force components f_i, f_j, f_k as the dot products of the face normal with the scaled tau0 vectors
+        f_i = np.sum(unit_norm * tau_i0, axis=1)
+        f_j = np.sum(unit_norm * tau_j0, axis=1)
+        f_k = np.sum(unit_norm * tau_k0, axis=1)
+
+        fs = np.stack([f_i, f_j, f_k], axis=1)
+        ts = np.stack([t_i, t_j, t_k], axis=1)
+        cs = np.stack([c_i, c_j, c_k], axis=1)
+        
+        return ts, fs, cs
+    
+    def update_pre_comp_shell(self, q: np.ndarray) -> np.ndarray:
+        if not self.sim_params.use_mid_edge:
+            return np.empty(0)
+        
         # Compute face normals
-        v1 = q[3*faces[:, 1]] - q[3*faces[:, 0]]
-        v2 = q[3*faces[:, 2]] - q[3*faces[:, 1]]
+        v1 = q[self.map_node_to_dof(self.__face_nodes_shell[:, 1])] - q[self.map_node_to_dof(self.__face_nodes_shell[:, 0])]
+        v2 = q[self.map_node_to_dof(self.__face_nodes_shell[:, 2])] - q[self.map_node_to_dof(self.__face_nodes_shell[:, 1])]
         face_normals = np.cross(v1, v2)
         face_normals /= np.linalg.norm(face_normals, axis=1, keepdims=True)
 
         # Accumulate edge normals
         edge_normals = np.zeros((self.__n_edges, 3))
-        np.add.at(edge_normals, face_edges.ravel(),
-                  face_normals.repeat(3, axis=0))
-        edge_counts = np.bincount(face_edges.ravel(), minlength=self.__n_edges)
+        np.add.at(edge_normals, self.__face_edges.ravel(), face_normals.repeat(3, axis=0))
+
+        # Normalize edge normals
+        edge_counts = np.bincount(self.__face_edges.ravel(), minlength=self.__n_edges)
         edge_normals /= edge_counts[:, None] + 1e-10
 
         # Compute edge vectors and tau_0
-        edge_vecs = q[3*self.__edges[:, 1]] - q[3*self.__edges[:, 0]]
+        edge_vecs = q[self.map_node_to_dof(self.__edges[:, 1])] - q[self.map_node_to_dof(self.__edges[:, 0])]
         tau_0 = np.cross(edge_vecs, edge_normals)
-        tau_0 /= np.linalg.norm(tau_0, axis=1, keepdims=True)
+        tau_0 /= np.linalg.norm(tau_0, axis=1, keepdims=True) + 1e-10
+
         return tau_0.T
-
-    @staticmethod
-    def _batch_init_tfc_midedge(p_s: np.ndarray, tau0_s: np.ndarray, s_s: np.ndarray) -> typing.Tuple[np.ndarray, ...]:
-        # Vectorized computation for all faces
-        vi = p_s[:, 2] - p_s[:, 1]  # pk - pj
-        vj = p_s[:, 0] - p_s[:, 2]  # pi - pk
-        vk = p_s[:, 1] - p_s[:, 0]  # pj - pi
-
-        norms = np.linalg.norm(np.cross(vk, vi), axis=1, keepdims=True)
-        unit_norm = np.cross(vk, vi) / (norms + 1e-10)
-
-        # Compute t vectors
-        t_i = np.cross(vi, unit_norm)
-        t_j = np.cross(vj, unit_norm)
-        t_k = np.cross(vk, unit_norm)
-        t_norms = np.linalg.norm([t_i, t_j, t_k], axis=2, keepdims=True)
-        t_i, t_j, t_k = (x / (t_norms + 1e-10) for x in (t_i, t_j, t_k))
-
-        # Compute c values
-        li = np.linalg.norm(vi, axis=1, keepdims=True)
-        lj = np.linalg.norm(vj, axis=1, keepdims=True)
-        lk = np.linalg.norm(vk, axis=1, keepdims=True)
-
-        dot_prods = np.einsum('ij,ijk->ik', t_i.reshape(-1, 3), tau0_s[:, 0])
-        c_i = 1 / (norms * li * dot_prods + 1e-10)
-        c_j = 1 / (norms * lj * dot_prods + 1e-10)
-        c_k = 1 / (norms * lk * dot_prods + 1e-10)
-
-        # Compute f values
-        f_vals = np.einsum('ij,ijk->ik', unit_norm,
-                           tau0_s * s_s[:, None, None])
-
-        return np.stack((t_i, t_j, t_k), f_vals, np.stack((c_i, c_j, c_k)))
 
     def compute_space_parallel(self) -> typing.Tuple[np.ndarray, np.ndarray]:
         a1 = np.zeros((self.__n_edges_dof, 3))
@@ -383,7 +425,7 @@ class SoftRobot:
 
     def free_edges(self, edges: typing.List[int] | np.ndarray) -> "SoftRobot":
         new_dof = np.setdiff1d(
-            self.fixed_dof, self._get_edge_dof(edges), assume_unique=True)
+            self.fixed_dof, self.map_edge_to_dof(edges), assume_unique=True)
         return self._fix_dof(new_dof)
 
     def fix_edges(self, edges: np.ndarray) -> "SoftRobot":
@@ -424,14 +466,17 @@ class SoftRobot:
     def _get_node_dof_mask(nodes: typing.List[int] | np.ndarray, axis: int | None = None):
         """Masked get_node_dof for fixing specific axes """
         node_dof = SoftRobot.map_node_to_dof(nodes)
-        return (node_dof if axis is None else node_dof[:,axis]).ravel()
+        return (node_dof if axis is None else node_dof[:, axis]).ravel()
 
     @staticmethod
-    def map_node_to_dof(node_nums: typing.Union[int, np.ndarray], mask=None) -> np.ndarray:
+    def map_node_to_dof(node_nums: int | np.ndarray) -> np.ndarray:
         return (3 * np.asarray(node_nums))[..., None] + np.array([0, 1, 2])
 
-    def map_edge_to_dof(self, edge_nums: typing.Union[int, np.ndarray]) -> np.ndarray:
+    def map_edge_to_dof(self, edge_nums: int | np.ndarray) -> np.ndarray:
         return 3 * self.__n_nodes + np.asarray(edge_nums)
+    
+    def map_face_edge_to_dof(self, edge_nums: int | np.ndarray) -> np.ndarray:
+        return 3 * self.__n_nodes + self.__n_edges_dof + np.asarray(edge_nums)
 
     def update(
         self,
@@ -511,6 +556,11 @@ class SoftRobot:
     def hinge_springs(self) -> typing.List[HingeSpring]:
         """List of hinge spring elements"""
         return self.__shell_hinge_springs
+    
+    @property
+    def triangle_springs(self) -> typing.List[TriangleSpring]:
+        """List of triangle spring elements"""
+        return self.__triangle_springs
 
     # Visualization properties
 

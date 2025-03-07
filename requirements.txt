@@ -21,10 +21,12 @@ matplotlib==3.10.0
 matplotlib-inline==0.1.7
 nest-asyncio==1.6.0
 numpy==2.2.3
+nbformat>=4.2.0
 packaging==24.2
 parso==0.8.4
 pillow==11.1.0
 platformdirs==4.3.6
+plotly==6.0.0
 pluggy==1.5.0
 prompt_toolkit==3.0.50
 psutil==7.0.0

@@ -191,7 +191,7 @@ class BendEnergy(ElasticEnergy):
         D2kappa2Dthetae2 = 0.5 * np.sum(kb * self.m1e, axis=1)
         D2kappa2Dthetaf2 = 0.5 * np.sum(kb * self.m1f, axis=1)
 
-        # Coupled terms (corrected)
+        # Coupled terms
         D2kappa1DeDthetae = (1/norm_e[:, None, None]) * (
             0.5 * np.einsum('sij,sjk->sik', batch_outer(kb, self.m1e),
                             tilde_t[:, :, None])
@@ -216,7 +216,6 @@ class BendEnergy(ElasticEnergy):
             + (1/chi[:, None, None]) * np.cross(te, self.m1f)[:, :, None]
         )
 
-        # Similar corrections for D2kappa2 terms
         D2kappa2DeDthetae = (1/norm_e[:, None, None]) * (
             0.5 * np.einsum('sij,sjk->sik', batch_outer(kb, self.m2e),
                             tilde_t[:, :, None])
@@ -242,7 +241,7 @@ class BendEnergy(ElasticEnergy):
         )
 
         def batch_assign_blocks(DDkappa, D2De2, D2DeDf, D2DfDe, D2Df2, D2t1, D2t2, D2ct):
-            # Position blocks (unchanged)
+            # Position blocks
             DDkappa[:, :3, :3] = D2De2
             DDkappa[:, :3, 3:6] = -D2De2 + D2DeDf
             DDkappa[:, :3, 6:9] = -D2DeDf
@@ -255,31 +254,23 @@ class BendEnergy(ElasticEnergy):
             DDkappa[:, 6:9, 3:6] = D2DfDe - D2Df2
             DDkappa[:, 6:9, 6:9] = D2Df2
 
-            # Twist terms (unchanged)
+            # Twist terms
             DDkappa[:, 9, 9] = D2t1
             DDkappa[:, 10, 10] = D2t2
-
-            # Corrected coupled terms handling
-            # For column 9 (theta_e)
-            # Column entries (keep as 3D arrays)
-            DDkappa[:, :3, 9:10] = -D2ct[0][0]  # shape (n, 3, 1)
+            DDkappa[:, :3, 9:10] = -D2ct[0][0]
             DDkappa[:, 3:6, 9:10] = D2ct[0][0] - D2ct[0][1]
             DDkappa[:, 6:9, 9:10] = D2ct[0][1]
 
-            # Row entries (transpose and maintain 3D structure)
+            # Row entries
             DDkappa[:, 9:10, :3] = - \
-                D2ct[0][0].transpose(0, 2, 1)  # shape (n, 1, 3)
+                D2ct[0][0].transpose(0, 2, 1)
             DDkappa[:, 9:10, 3:6] = (
                 D2ct[0][0] - D2ct[0][1]).transpose(0, 2, 1)
             DDkappa[:, 9:10, 6:9] = D2ct[0][1].transpose(0, 2, 1)
-
-            # For column 10 (theta_f)
-            # Column entries
             DDkappa[:, :3, 10:11] = -D2ct[1][0]
             DDkappa[:, 3:6, 10:11] = D2ct[1][0] - D2ct[1][1]
             DDkappa[:, 6:9, 10:11] = D2ct[1][1]
 
-            # Row entries
             DDkappa[:, 10:11, :3] = -D2ct[1][0].transpose(0, 2, 1)
             DDkappa[:, 10:11, 3:6] = (
                 D2ct[1][0] - D2ct[1][1]).transpose(0, 2, 1)
@@ -289,11 +280,9 @@ class BendEnergy(ElasticEnergy):
         DDkappa1 = np.zeros((n_springs, 11, 11))
         DDkappa2 = np.zeros((n_springs, 11, 11))
 
-        # Assign blocks for DDkappa1
         batch_assign_blocks(DDkappa1,
                             D2kappa1De2,
                             D2kappa1DeDf,
-                            # D2DfDe is transpose of DeDf
                             D2kappa1DeDf.transpose(0, 2, 1),
                             D2kappa1Df2,
                             D2kappa1Dthetae2,
@@ -301,7 +290,6 @@ class BendEnergy(ElasticEnergy):
                             [(D2kappa1DeDthetae, D2kappa1DfDthetae),
                              (D2kappa1DeDthetaf, D2kappa1DfDthetaf)])
 
-        # Assign blocks for DDkappa2
         batch_assign_blocks(DDkappa2,
                             D2kappa2De2,
                             D2kappa2DeDf,

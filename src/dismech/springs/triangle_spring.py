@@ -39,6 +39,6 @@ class TriangleSpring:
                               map_node_to_dof(nodes_ind[1]),
                               map_node_to_dof(nodes_ind[2]),
                               np.array([map_face_edge_to_dof(edges_ind[0])]),
-                              np.array([map_face_edge_to_dof(edges_ind[0])]),
-                              np.array([map_face_edge_to_dof(edges_ind[0])])
+                              np.array([map_face_edge_to_dof(edges_ind[1])]),
+                              np.array([map_face_edge_to_dof(edges_ind[2])])
                               ])

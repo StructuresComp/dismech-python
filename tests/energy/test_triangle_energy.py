@@ -15,20 +15,6 @@ def rel_path(fname: str) -> pathlib.Path:
     """
     return pathlib.Path(__file__).parent / fname
 
-
-def triangle_energy_helper2(robot, truth):
-    energy = TriangleEnergy(robot.triangle_springs, robot.state)
-    new_state = RobotState.init(robot.q0,
-                                np.ndarray([]),
-                                np.ndarray([]),
-                                np.ndarray([]),
-                                np.ndarray([]),
-                                np.ndarray([]),
-                                robot._SoftRobot__tau0)
-    Fb, Jb = energy.grad_hess_energy_linear_elastic(new_state)
-    assert (np.allclose(Fb, truth['Fb_shell'].flatten()))
-    assert (np.allclose(Jb, truth['Jb_shell']))
-
 def triangle_energy_helper(robot, truth):
     energy = TriangleEnergy(robot.triangle_springs, robot.state)
     new_state = RobotState.init(truth['q'].flatten(),
@@ -54,4 +40,4 @@ def test_triangle_energy_shell_cantilever_n40(softrobot_shell_cantilever_n40_mid
     robot = softrobot_shell_cantilever_n40_mid_edge
     valid_data = scipy.io.loadmat(
         rel_path('../resources/shell_cantilever/shell_cantilever_n40_get_fb_jb_midedge_shell.mat'))
-    triangle_energy_helper2(robot, valid_data)
+    triangle_energy_helper(robot, valid_data)

@@ -24,8 +24,8 @@ class TwistEnergy(ElasticEnergy):
         self._sign_hess = self._sign_grad[:, :, None] * \
             self._sign_grad[:, None, :]
 
-        self.theta_e = np.empty((N))
-        self.theta_f = np.empty((N))
+        self.theta_e = np.empty(N)
+        self.theta_f = np.empty(N)
 
     def _set_thetas(self, q: np.ndarray):
         self.theta_e[:] = q[self._edges_ind[:, 0]] * self._sgn[:, 0]

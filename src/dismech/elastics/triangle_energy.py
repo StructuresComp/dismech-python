@@ -31,25 +31,9 @@ class TriangleEnergy(ElasticEnergy):
     def _get_tau(self, tau: np.ndarray) -> np.ndarray:
         return (tau[:, self._face_edges] * self._s_s[None, ...]).transpose(1, 0, 2)
 
-    # FIXME: Override main function as strain is difficult to isolate right now
+    def _get_t_f_c(self, q: np.ndarray, tau: np.ndarray) -> typing.Tuple[np.ndarray, ...]:
+        n0p, n1p, n2p = self._get_node_pos(q)
 
-    def get_energy_linear_elastic(self, state: RobotState) -> np.ndarray:
-        return np.empty(0)
-
-    # Placeholders
-
-    def get_strain(self, state: RobotState) -> np.ndarray:
-        return np.empty(0)
-
-    def grad_hess_strain(self, state: RobotState) -> typing.Tuple[np.ndarray, np.ndarray]:
-        return np.empty(0), np.empty(0)
-
-    def grad_hess_energy_linear_elastic(self, state: RobotState) -> typing.Tuple[np.ndarray, np.ndarray]:
-        n0p, n1p, n2p = self._get_node_pos(state.q)
-        xis = self._get_xi_is(state.q)
-        tau = self._get_tau(state.tau)
-
-        # Get t, f, c
         vi = n2p - n1p
         vj = n0p - n2p
         vk = n1p - n0p
@@ -67,10 +51,34 @@ class TriangleEnergy(ElasticEnergy):
         c = 1 / (self._A[:, None] * self._ls * np.sum(t /
                  np.linalg.norm(t, axis=1, keepdims=True) * tau, axis=1))
 
-        def delfi_by_delpk(t_i):
-            """ Helper function to get (N x 3 x 3) where [N,i] gives you the resulting vector"""
-            return (np.einsum('ijk,ij->ik', tau, t_i) / (2 * self._A)[:, None])[..., None] * unit_norm[:, None, :]
+        return t, f, c, unit_norm
+    
+    def _delfi_by_delpk(self, t, tau, unit_norm):
+        """
+        Returns a N x 3 x 3 x 3 matrix where [N, i, j] corresponds to delfi vector for t_i for tau(:,j)
+        """
+        factor = np.einsum('njk,njl->nlk', tau, t) / (2 * self._A)[:, None, None]
+        return factor[..., None] * unit_norm[:, None, None, :]
 
+    # FIXME: Override main function as strain is difficult to isolate right now
+
+    def get_energy_linear_elastic(self, state: RobotState) -> np.ndarray:
+        return np.empty(0)
+
+    # Placeholders
+
+    def get_strain(self, state: RobotState) -> np.ndarray:
+        return np.empty(0)
+
+    def grad_hess_strain(self, state: RobotState) -> typing.Tuple[np.ndarray, np.ndarray]:
+        return np.empty(0), np.empty(0)
+
+    def grad_hess_energy_linear_elastic(self, state: RobotState) -> typing.Tuple[np.ndarray, np.ndarray]:
+        tau = self._get_tau(state.tau)
+        xis = self._get_xi_is(state.q)
+        t, f, c, unit_norm = self._get_t_f_c(state.q, tau)
+
+        N = t.shape[0]
         # Precompute common terms
         s_xis = self._s_s * xis - f
         # FIXME: matlab is broken???
@@ -91,17 +99,15 @@ class TriangleEnergy(ElasticEnergy):
         t_norms_sq_sq = np.einsum('ni,nj->nij', t_norm_sq, t_norm_sq)
         t_norms_sq_ls_sq = np.einsum('ni,nj->nij', t_norm_sq, self._ls**2)
 
-        delfi_i = delfi_by_delpk(t[..., 0])
-        delfi_j = delfi_by_delpk(t[..., 1])
-        delfi_k = delfi_by_delpk(t[..., 2])
+        delfi = self._delfi_by_delpk(t, tau, unit_norm)
 
         # useful broadcasts
         s_xis_i = s_xis[:, None, :]
         s_xis_j = s_xis[:, :, None]
         s_initxis_j = s_initxis[:, :, None]
 
-        coeff_1_pre = ci_cj * s_xis_i
-        coeff_2_pre = ci_cj * s_xis_j
+        coeff_1_pre = -ci_cj * s_xis_i
+        coeff_2_pre = -ci_cj * s_xis_j
         coeff_3_pre = 2 * ci_init_cj * s_initxis_j
 
         # Precompute coeffs (sum over i = 1, j = 2)
@@ -124,17 +130,17 @@ class TriangleEnergy(ElasticEnergy):
             M22 = np.sum(delfi_j * e_22_coeff, axis=2)
             M23 = np.sum(delfi_i * e_23_coeff, axis=1)
 
-            return -M11 - M12 + M13, - M21 - M22 + M23
+            return M11 + M12 + M13, M21 + M22 + M23
 
-        G11, G21 = compute_G_block(delfi_i)
-        G12, G22 = compute_G_block(delfi_j)
-        G13, G23 = compute_G_block(delfi_k)
+        G11, G21 = compute_G_block(delfi[:,0])
+        G12, G22 = compute_G_block(delfi[:,1])
+        G13, G23 = compute_G_block(delfi[:,2])
 
         ci_sj = 2 * np.einsum('ni,ni->ni', c, self._s_s)[:, None, :]
 
         coeff_1_pre = (ci_sj * c[:, :, None] * s_xis_j)
         # FIXME: Broken fs = cs
-        coeff_2_pre = (ci_sj * self._init_fs[:, :, None] * s_initxis_j)
+        coeff_2_pre = (-ci_sj * self._init_fs[:, :, None] * s_initxis_j)
 
         T11 = np.sum(coeff_1_pre * t_dot_t_sq, axis=1)
         T12 = np.sum(coeff_2_pre * t_dot_init_t_sq, axis=1)
@@ -143,7 +149,7 @@ class TriangleEnergy(ElasticEnergy):
         T22 = np.sum(coeff_2_pre * t_norms_sq_ls_sq, axis=1)
 
         X1 = T11 + T12
-        X2 = T21 - T22
+        X2 = T21 + T22
 
         grad_e1 = np.hstack([G11, G12, G13, X1])
         grad_e2 = np.hstack([G21, G22, G23, X2])

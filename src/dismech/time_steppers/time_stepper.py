@@ -3,6 +3,7 @@ import copy
 import typing
 
 import numpy as np
+from tqdm.notebook import tqdm
 
 from ..soft_robot import SoftRobot
 from ..state import RobotState
@@ -50,7 +51,7 @@ class TimeStepper(metaclass=abc.ABCMeta):
         steps = int(robot.sim_params.total_time / robot.sim_params.dt) + 1
 
         ret = []
-        for i in range(1, steps):
+        for i in tqdm(range(1, steps)):
             if self.before_step is not None:
                 robot = self.before_step(robot, i * robot.sim_params.dt)
             robot = self.step(robot)

@@ -4,11 +4,10 @@ import numpy as np
 from ..soft_robot import SoftRobot
 
 
-def compute_aerodynamic_forces(robot: SoftRobot, q: np.ndarray, q0: np.ndarray) -> typing.Tuple[np.ndarray, np.ndarray]:
+def compute_aerodynamic_forces(robot: SoftRobot, q: np.ndarray, u: np.ndarray) -> typing.Tuple[np.ndarray, np.ndarray]:
     cd = robot.env.cd
     rho_med = robot.env.rho
     dt = robot.sim_params.dt
-    u = (q - q0) / dt
     Fd = np.zeros(robot.n_dof)
     Jd = np.zeros((robot.n_dof, robot.n_dof))
     face_as = robot.face_area
@@ -161,11 +160,10 @@ def compute_aerodynamic_forces(robot: SoftRobot, q: np.ndarray, q0: np.ndarray) 
     return Fd, Jd
 
 
-def compute_aerodynamic_forces_vectorized(robot: SoftRobot, q: np.ndarray, q0: np.ndarray) -> typing.Tuple[np.ndarray, np.ndarray]:
+def compute_aerodynamic_forces_vectorized(robot: SoftRobot, q: np.ndarray, u: np.ndarray) -> typing.Tuple[np.ndarray, np.ndarray]:
     cd = robot.env.cd
     rho_med = robot.env.rho
     dt = robot.sim_params.dt
-    u = (q - q0) / dt
     n_dof = robot.n_dof
     Fd = np.zeros(n_dof)
     Jd = np.zeros((n_dof, n_dof))

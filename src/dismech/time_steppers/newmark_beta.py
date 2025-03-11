@@ -8,9 +8,10 @@ from ..soft_robot import SoftRobot
 
 class NewmarkBetaTimeStepper(TimeStepper):
 
-    def __init__(self, robot: SoftRobot, min_force=1e-8, dtype=np.float64, beta=0.25):
+    def __init__(self, robot: SoftRobot, min_force=1e-8, dtype=np.float64, beta=0.25, gamma=0.5):
         super().__init__(robot, min_force, dtype)
         self._beta = beta
+        self._gamma = gamma
 
     def _compute_inertial_force_and_jacobian(self, robot: SoftRobot, q: np.ndarray) -> typing.Tuple[np.ndarray, np.ndarray]:
         # Inertial force: M * a_new
@@ -27,3 +28,10 @@ class NewmarkBetaTimeStepper(TimeStepper):
         return (q - robot.state.q - robot.sim_params.dt * robot.state.u) / \
             (self._beta * robot.sim_params.dt**2) - \
             ((1 - 2 * self._beta) / (2 * self._beta)) * robot.state.a
+
+    def _compute_velocity(self, robot: SoftRobot, q: np.ndarray) -> np.ndarray:
+        return robot.state.u + robot.sim_params.dt * ((1 - self._gamma) * robot.state.a +
+                                                      self._gamma * self._compute_acceleration(robot, q))
+    
+    def _compute_evaluation_velocity(self, robot, q):
+        return self._compute_velocity(robot, q)

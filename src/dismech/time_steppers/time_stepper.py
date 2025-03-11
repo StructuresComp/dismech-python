@@ -80,8 +80,11 @@ class TimeStepper(metaclass=abc.ABCMeta):
         self._dq_free = np.empty(robot.state.free_dof.shape[0])
 
         while not solved:
-            # Updates private variables
-            self._compute_forces_and_jacobian(robot, q, robot.state.q)
+            # Some integrators compute F and J not at q_{n+1} (midpoint)
+            q_eval = self._compute_evaluation_position(robot, q)
+            u_eval = self._compute_evaluation_velocity(robot, q)
+
+            self._compute_forces_and_jacobian(robot, q_eval, u_eval)
 
             # Inertial force vs equilibrium
             if robot.sim_params.static_sim:
@@ -135,14 +138,23 @@ class TimeStepper(metaclass=abc.ABCMeta):
 
     def _compute_acceleration(self, robot: SoftRobot, q: np.ndarray) -> np.ndarray:
         return np.zeros_like(q)
+    
+    def _compute_velocity(self, robot: SoftRobot, q:np.ndarray) -> np.ndarray:
+        return (q - robot.state.q) / robot.sim_params.dt
+    
+    def _compute_evaluation_position(self, robot: SoftRobot, q: np.ndarray) -> np.ndarray:
+        return q
 
-    def _compute_forces_and_jacobian(self, robot: SoftRobot, q, q0):
+    def _compute_evaluation_velocity(self, robot: SoftRobot, q: np.ndarray) -> np.ndarray:
+        return (q - robot.state.q) / robot.sim_params.dt
+
+    def _compute_forces_and_jacobian(self, robot: SoftRobot, q, u):
         """ Sets self._forces and self._jacobian to sum of external/internal forces """
         self._forces[:].fill(0.0)
         self._jacobian[:].fill(0.0)
 
         # Compute reference frames and material directors
-        a1_iter, a2_iter = robot.compute_time_parallel(robot.state.a1, q0, q)
+        a1_iter, a2_iter = robot.compute_time_parallel(robot.state.a1, robot.state.q, q)
         m1, m2 = robot.compute_material_directors(q, a1_iter, a2_iter)
         ref_twist = robot.compute_reference_twist(
             robot.bend_twist_springs, q, a1_iter, robot.state.ref_twist)
@@ -162,7 +174,7 @@ class TimeStepper(metaclass=abc.ABCMeta):
         if "gravity" in robot.env.ext_force_list:
             self._forces[:] += compute_gravity_forces(robot)
         if "aerodynamics" in robot.env.ext_force_list:
-            F, J, = compute_aerodynamic_forces_vectorized(robot, q, q0)
+            F, J, = compute_aerodynamic_forces_vectorized(robot, q, u)
             self._forces[:] += F
             self._jacobian[:] += J
 
@@ -188,7 +200,7 @@ class TimeStepper(metaclass=abc.ABCMeta):
         return max(alpha * 0.9, 0.1)
 
     def _finalize_update(self, robot: SoftRobot, q):
-        u = (q - robot.state.q) / robot.sim_params.dt
+        u = self._compute_velocity(robot, q)
         a = self._compute_acceleration(robot, q)
         a1, a2 = robot.compute_time_parallel(robot.state.a1, robot.state.q, q)
         m1, m2 = robot.compute_material_directors(q, a1, a2)

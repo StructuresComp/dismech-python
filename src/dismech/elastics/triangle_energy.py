@@ -6,7 +6,7 @@ from ..springs import TriangleSpring
 from ..state import RobotState
 from .elastic_energy import ElasticEnergy
 
-from .triangle_helper import compute_dpdp_jit, compute_delfi_sq_jit
+from .triangle_helper import compute_dp_jit, compute_delfi_sq_jit, compute_dpdp_jit
 
 
 class TriangleEnergy(ElasticEnergy):
@@ -104,16 +104,12 @@ class TriangleEnergy(ElasticEnergy):
 
         # s_s terms
         s_xis = self._s_s * xis - f
-        # FIXME: matlab is broken???
-        # s_initxis = self._s_s * self._init_xis - self._init_cs
         s_initxis = self._s_s * self._init_xis - self._init_fs
 
         si_sj = np.einsum('ni, nj->nij', self._s_s, self._s_s)
 
         # c terms
         ci_cj = np.einsum('ni, nj->nij', c, c)
-        # FIXME: matlab is broken???
-        # ci_init_cj = np.einsum('ni, nj->nij', c, self._init_fs)
         ci_init_cj = np.einsum('ni, nj->nij', c, self._init_cs)
 
         # hybrid
@@ -133,9 +129,6 @@ class TriangleEnergy(ElasticEnergy):
         # delfi
         delfi = self._delfi_by_delpk(t, tau, unit_norm)
         ddelfi = self._ddelfi_by_del_p_k1_p_k2(t, tau, unit_norm)
-        #ddelfi_test = compute_ddelfi_jit(t, tau, unit_norm, self._A)
-        #assert(np.allclose(ddelfi, ddelfi_test))
-        #delfi_sq = np.einsum('nabc,ndef->nabdecf', delfi, delfi)
         delfi_sq = compute_delfi_sq_jit(delfi)
 
         # Extend to N x 3 x 3
@@ -149,19 +142,13 @@ class TriangleEnergy(ElasticEnergy):
         dp_coeff_2 = -ci_cj * s_xis_j
         dp_coeff_3 = 2 * ci_init_cj * s_initxis_j
 
-        def compute_dp(factor1, factor2):
-            M13 = np.einsum('nij,nlja->nla', dp_coeff_1 *
-                            factor1 + dp_coeff_3 * factor2, delfi)
-            M2 = np.einsum('nij,nlia->nla', dp_coeff_2 * factor1, delfi)
-            return (M2 + M13).reshape(-1, 9)
-
-        dp_1 = compute_dp(t_dot_t_sq, t_dot_init_t_sq)
-        dp_2 = compute_dp(t_norms_sq_sq, t_norms_sq_ls_sq)
+        dp_1 = compute_dp_jit(dp_coeff_1, dp_coeff_2,
+                              dp_coeff_3, t_dot_t_sq, t_dot_init_t_sq, delfi)
+        dp_2 = compute_dp_jit(dp_coeff_1, dp_coeff_2,
+                              dp_coeff_3, t_norms_sq_sq, t_norms_sq_ls_sq, delfi)
 
         # 2: dx (N x 3)
         dx_coeff_1 = ci_sj * c[:, :, None] * s_xis_i
-        # FIXME: Broken fs = cs
-        # dx_coeff_2 = -ci_sj * self._init_fs[:, :, None] * s_initxis_i
         dx_coeff_2 = -ci_sj * self._init_cs[:, :, None] * s_initxis_i
 
         def compute_dx(factor1, factor2):
@@ -195,24 +182,10 @@ class TriangleEnergy(ElasticEnergy):
         dxdx_2 = compute_dxdx(t_norms_sq_sq)
 
         # 2: d/dp^2 (N x 9 x 9)
-        def compute_dpdp(factor1, factor2):
-            # -ci_cj * s_xis_j * factor1 * ddelfi[k2, k1]
-            M1 = np.einsum('nij,ntkjab->ntakb', dp_coeff_1 * factor1, ddelfi)
-            # -ci_cj * factor1 * (delfi_j_k1.T @ delfi_i_k2)
-            M2 = np.einsum('nij,nkjtiab->ntakb', ci_cj * factor1, delfi_sq)
-            # -ci_cj * s_xis_i * factor1 * ddelfi[k2, k1]
-            M3 = np.einsum('nij,ntkiab->ntakb', dp_coeff_2 * factor1, ddelfi)
-            # -ci_cj * factor1 * (delfi_i_k1.T @ delfi_j_k2) (Transpose of M2)
-            # 2 * ci_init_cj * factor2 * s_initxis_j * ddelfi[k2, k1]
-            M5 = np.einsum('nij,ntkiab->ntakb', dp_coeff_3 * factor2, ddelfi)
-
-            return (M1 + M2 + M3 + M2.transpose(0, 3, 4, 1, 2) + M5).reshape(N, 9, 9)
-
-        #dpdp_1 = compute_dpdp(t_dot_t_sq, t_dot_init_t_sq)
-        #dpdp_2 = compute_dpdp(t_norms_sq_sq, t_norms_sq_ls_sq)
-
-        dpdp_1 = compute_dpdp_jit(dp_coeff_1, dp_coeff_2, dp_coeff_3, t_dot_t_sq, t_dot_init_t_sq, ddelfi, delfi_sq, ci_cj)
-        dpdp_2 = compute_dpdp_jit(dp_coeff_1, dp_coeff_2, dp_coeff_3, t_norms_sq_sq, t_norms_sq_ls_sq, ddelfi, delfi_sq, ci_cj)
+        dpdp_1 = compute_dpdp_jit(dp_coeff_1, dp_coeff_2, dp_coeff_3,
+                                  t_dot_t_sq, t_dot_init_t_sq, ddelfi, delfi_sq, ci_cj)
+        dpdp_2 = compute_dpdp_jit(dp_coeff_1, dp_coeff_2, dp_coeff_3,
+                                  t_norms_sq_sq, t_norms_sq_ls_sq, ddelfi, delfi_sq, ci_cj)
 
         # 3: d/dxdp (N x 9 x 3)
         dxdp_coeff_1 = -2 * c[:, :, None] * \

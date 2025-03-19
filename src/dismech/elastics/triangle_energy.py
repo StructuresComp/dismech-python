@@ -6,6 +6,8 @@ from ..springs import TriangleSpring
 from ..state import RobotState
 from .elastic_energy import ElasticEnergy
 
+from .triangle_helper import compute_dpdp_jit, compute_delfi_sq_jit
+
 
 class TriangleEnergy(ElasticEnergy):
     def __init__(self, springs: typing.List[TriangleSpring], initial_state: RobotState):
@@ -131,7 +133,10 @@ class TriangleEnergy(ElasticEnergy):
         # delfi
         delfi = self._delfi_by_delpk(t, tau, unit_norm)
         ddelfi = self._ddelfi_by_del_p_k1_p_k2(t, tau, unit_norm)
-        delfi_sq = np.einsum('nabc,ndef->nabdecf', delfi, delfi)
+        #ddelfi_test = compute_ddelfi_jit(t, tau, unit_norm, self._A)
+        #assert(np.allclose(ddelfi, ddelfi_test))
+        #delfi_sq = np.einsum('nabc,ndef->nabdecf', delfi, delfi)
+        delfi_sq = compute_delfi_sq_jit(delfi)
 
         # Extend to N x 3 x 3
         s_xis_i = s_xis[:, :, None]
@@ -203,8 +208,11 @@ class TriangleEnergy(ElasticEnergy):
 
             return (M1 + M2 + M3 + M2.transpose(0, 3, 4, 1, 2) + M5).reshape(N, 9, 9)
 
-        dpdp_1 = compute_dpdp(t_dot_t_sq, t_dot_init_t_sq)
-        dpdp_2 = compute_dpdp(t_norms_sq_sq, t_norms_sq_ls_sq)
+        #dpdp_1 = compute_dpdp(t_dot_t_sq, t_dot_init_t_sq)
+        #dpdp_2 = compute_dpdp(t_norms_sq_sq, t_norms_sq_ls_sq)
+
+        dpdp_1 = compute_dpdp_jit(dp_coeff_1, dp_coeff_2, dp_coeff_3, t_dot_t_sq, t_dot_init_t_sq, ddelfi, delfi_sq, ci_cj)
+        dpdp_2 = compute_dpdp_jit(dp_coeff_1, dp_coeff_2, dp_coeff_3, t_norms_sq_sq, t_norms_sq_ls_sq, ddelfi, delfi_sq, ci_cj)
 
         # 3: d/dxdp (N x 9 x 3)
         dxdp_coeff_1 = -2 * c[:, :, None] * \

@@ -1,4 +1,5 @@
 import typing
+import scipy.sparse as sp
 import numpy as np
 
 from ..springs import TriangleSpring
@@ -24,6 +25,11 @@ class TriangleEnergy(ElasticEnergy):
         self._init_xis = np.array([s.init_xis for s in springs])
         self._ls = np.array([s.ref_len for s in springs])
         self._s_s = np.array([s.sgn for s in springs])
+
+        # sparse index creation
+        stencil_n_dof = self._ind.shape[1]
+        self._rows = np.repeat(self._ind, stencil_n_dof, axis=1).ravel()
+        self._cols = np.tile(self._ind, (1, stencil_n_dof)).ravel()
 
     def _get_xi_is(self, q: np.ndarray) -> np.ndarray:
         return q[self._edges_ind]
@@ -88,7 +94,7 @@ class TriangleEnergy(ElasticEnergy):
     def grad_hess_strain(self, state: RobotState) -> typing.Tuple[np.ndarray, np.ndarray]:
         return np.empty(0), np.empty(0)
 
-    def grad_hess_energy_linear_elastic(self, state: RobotState) -> typing.Tuple[np.ndarray, np.ndarray]:
+    def grad_hess_energy_linear_elastic(self, state: RobotState, sparse=False) -> typing.Tuple[np.ndarray, np.ndarray]:
         tau = self._get_tau(state.tau)
         xis = self._get_xi_is(state.q)
         t, f, c, unit_norm = self._get_t_f_c(state.q, tau)
@@ -226,10 +232,15 @@ class TriangleEnergy(ElasticEnergy):
         # Accumulate into n_dof matrix
         n_dof = state.q.shape[0]
         Fs = np.zeros(n_dof)
-        Js = np.zeros((n_dof, n_dof))
-
         np.add.at(Fs, self._ind, -gradE_with_stiff)
-        np.add.at(Js, (self._ind[:, :, None],
-                  self._ind[:, None, :]), -hessE_with_stiff)
+
+        if sparse:
+            Js = sp.coo_matrix((-hessE_with_stiff.ravel(),
+                                (self._rows, self._cols)),
+                               shape=(n_dof, n_dof)).tocsr()
+        else:
+            Js = np.zeros((n_dof, n_dof))
+            np.add.at(Js, (self._ind[:, :, None],
+                           self._ind[:, None, :]), -hessE_with_stiff)
 
         return Fs, Js

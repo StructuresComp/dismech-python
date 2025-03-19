@@ -1,7 +1,7 @@
 import abc
 
 import numpy as np
-import scipy
+import scipy.sparse as sp
 import pypardiso
 
 
@@ -21,6 +21,9 @@ class NumpySolver(Solver):
         pass
 
     def solve(self, J: np.ndarray, F: np.ndarray):
+        if isinstance(J, sp.csr_matrix):
+            print("[WARNING] Using numpy (a dense solver) for a sparse matrix")
+            J = J.toarray()
         return np.linalg.solve(J, F)
 
 
@@ -29,6 +32,8 @@ class PardisoSolver(Solver):
     def __init__(self, **kwargs):
         pass
 
-    def solve(self, J: np.ndarray, F: np.ndarray):
-        J_sparse = scipy.sparse.csr_matrix(J)
-        return pypardiso.spsolve(J_sparse, F)
+    def solve(self, J: np.ndarray | sp.csr_matrix, F: np.ndarray):
+        if isinstance(J, np.ndarray):
+            print("[WARNING] Using Pardiso (a sparse solver) for a dense matrix")
+            J = sp.csr_matrix(J)
+        return pypardiso.spsolve(J, F)

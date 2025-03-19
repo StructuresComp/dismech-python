@@ -1,4 +1,5 @@
 import typing
+import scipy.sparse as sp
 import numpy as np
 
 from ..soft_robot import SoftRobot
@@ -166,7 +167,8 @@ def compute_aerodynamic_forces_vectorized(robot: SoftRobot, q: np.ndarray, u: np
     dt = robot.sim_params.dt
     n_dof = robot.n_dof
     Fd = np.zeros(n_dof)
-    Jd = np.zeros((n_dof, n_dof))
+    if not robot.sim_params.sparse:
+        Jd = np.zeros((n_dof, n_dof))
 
     face_as = robot.face_area
     face_nodes = robot.face_nodes_shell
@@ -282,10 +284,33 @@ def compute_aerodynamic_forces_vectorized(robot: SoftRobot, q: np.ndarray, u: np
             term_j = np.matmul(term_j, grad_cross)
             J_blocks[(i, j)][mask] = signs[i][mask][:, None, None] * coeff[mask] * \
                 dot_us[i][mask][:, None, None] * term_j[mask]
+    
 
     # --- Scatter all block contributions into global Jacobian ---
-    for i in range(3):
-        for j in range(3):
-            add_block(Jd, dofs[i], dofs[j], J_blocks[(i, j)])
+    if robot.sim_params.sparse:
+        data_list = []
+        rows_list = []
+        cols_list = []
 
+        for i in range(3):
+            for j in range(3):
+                block_data = J_blocks[(i, j)]
+                faces, ks, ls = np.nonzero(block_data)
+                values = block_data[faces, ks, ls]
+                row_indices = dofs[i][faces, ks]
+                col_indices = dofs[j][faces, ls]
+
+                data_list.append(values)
+                rows_list.append(row_indices)
+                cols_list.append(col_indices)
+
+        data = np.concatenate(data_list)
+        rows = np.concatenate(rows_list)
+        cols = np.concatenate(cols_list)
+
+        Jd = sp.coo_matrix((data, (rows, cols)), shape=(n_dof, n_dof)).tocsr()
+    else:
+        for i in range(3):
+            for j in range(3):
+                add_block(Jd, dofs[i], dofs[j], J_blocks[(i, j)])
     return Fd, Jd

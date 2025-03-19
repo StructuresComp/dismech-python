@@ -1,4 +1,5 @@
 import numpy as np
+import scipy.sparse as sp
 import abc
 import typing
 
@@ -33,6 +34,11 @@ class ElasticEnergy(metaclass=PostInitABCMeta):
         self._initial_state = initial_state
         self._ind = ind
 
+        # sparse index creation
+        stencil_n_dof = self._ind.shape[1]
+        self._rows = np.repeat(self._ind, stencil_n_dof, axis=1).ravel()
+        self._cols = np.tile(self._ind, (1, stencil_n_dof)).ravel()
+
     def __post_init__(self):
         self._nat_strain = self.get_strain(self._initial_state).copy()
 
@@ -40,25 +46,17 @@ class ElasticEnergy(metaclass=PostInitABCMeta):
         """Return a M x N x 3 matrix """
         return q[self._node_dof_ind].reshape(self._n_nodes, -1, 3)
 
-    # FIXME: Never called so didn't fix
     def get_energy_linear_elastic(self, state: RobotState):
-        # stiffness (with discrete geometry considerations) : unit Nm (same unit as energy)
         strain = self.get_strain(state)
-        del_strain = strain - self._nat_strain
+        del_strain = (strain - self._nat_strain).reshape(-1, self._n_K)
+        return 0.5 * np.sum(self._K.reshape(-1, self._n_K) * del_strain**2)
 
-        if isinstance(self.K, np.ndarray):  # rod bending
-            del_strain = del_strain.reshape(2, 1)
-            Energy = 0.5 * del_strain.T @ self.K @ del_strain
-        else:
-            Energy = 0.5 * del_strain**2
-        return Energy
-
-    def grad_hess_energy_linear_elastic(self, state: RobotState) -> typing.Tuple[np.ndarray, np.ndarray]:
+    def grad_hess_energy_linear_elastic(self, state: RobotState, sparse: bool = False) -> typing.Tuple[np.ndarray, np.ndarray] | typing.Tuple[np.ndarray, sp.csr_array]:
         strain = self.get_strain(state)
         grad_strain, hess_strain = self.grad_hess_strain(state)
 
-        del_strain = strain - self._nat_strain
-        gradE_strain = self._K * del_strain
+        del_strain = (strain - self._nat_strain).reshape(-1, self._n_K)
+        gradE_strain = self._K.reshape(-1, self._n_K) * del_strain
 
         # Reshape to handle multiple strain components (EI1, EI2)
         gradE_strain = gradE_strain.reshape(gradE_strain.shape[0], self._n_K)
@@ -89,13 +87,19 @@ class ElasticEnergy(metaclass=PostInitABCMeta):
             hess_energy *= sign_hess
 
         n_dof = state.q.shape[0]
-        Fs = np.zeros(n_dof)
-        Js = np.zeros((n_dof, n_dof))
 
-        # Accumulate gradients and Hessians
+        # Force always dense
+        Fs = np.zeros(n_dof)
         np.add.at(Fs, self._ind, -grad_energy)
-        np.add.at(Js, (self._ind[:, :, None],
-                  self._ind[:, None, :]), -hess_energy)
+
+        if sparse:
+            Js = sp.coo_matrix((-hess_energy.ravel(),
+                                (self._rows, self._cols)),
+                               shape=(n_dof, n_dof)).tocsr()
+        else:
+            Js = np.zeros((n_dof, n_dof))
+            np.add.at(Js, (self._ind[:, :, None],
+                           self._ind[:, None, :]), -hess_energy)
 
         return Fs, Js
 

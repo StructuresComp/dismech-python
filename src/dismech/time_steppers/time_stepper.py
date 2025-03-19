@@ -2,6 +2,7 @@ import abc
 import copy
 import typing
 
+import scipy.sparse as sp
 import numpy as np
 from tqdm.notebook import tqdm
 
@@ -68,16 +69,20 @@ class TimeStepper(metaclass=abc.ABCMeta):
         iteration = 1
         err_history = []
         solved = False
-        iteration_limit = False
 
         # Preallocate matrices
-        self._forces = np.empty(robot.state.q.shape[0])
-        self._jacobian = np.empty(
-            (robot.state.q.shape[0], robot.state.q.shape[0]))
-        self._f_free = np.empty(robot.state.free_dof.shape[0])
-        self._j_free = np.empty(
-            (robot.state.free_dof.shape[0], robot.state.free_dof.shape[0]))
-        self._dq_free = np.empty(robot.state.free_dof.shape[0])
+        self._n_dof = robot.state.q.shape[0]
+        n_free_dof = robot.state.free_dof.shape[0]
+
+        self._forces = np.empty(self._n_dof)
+        self._f_free = np.empty(n_free_dof)
+        self._dq_free = np.empty(n_free_dof)
+
+        if not robot.sim_params.sparse:
+            self._jacobian = np.empty((self._n_dof, self._n_dof))
+            self._j_free = np.empty((n_free_dof, n_free_dof))
+
+        ndof_diag = np.arange(robot.state.q.shape[0])
 
         while not solved:
             # Some integrators compute F and J not at q_{n+1} (midpoint)
@@ -87,20 +92,24 @@ class TimeStepper(metaclass=abc.ABCMeta):
             self._compute_forces_and_jacobian(robot, q_eval, u_eval)
 
             # Inertial force vs equilibrium
-            if robot.sim_params.static_sim:
-                self._forces *= -1
-                self._jacobian *= -1
-            else:
-                inertial_force, interial_jacobian = self._compute_inertial_force_and_jacobian(
+            if not robot.sim_params.static_sim:
+                inertial_force, inertial_jacobian = self._compute_inertial_force_and_jacobian(
                     robot, q)
-                np.subtract(inertial_force, self._forces, out=self._forces)
-                np.subtract(interial_jacobian, self._jacobian,
-                            out=self._jacobian)
+                self._forces += inertial_force
+
+                if robot.sim_params.sparse:
+                    self._jacobian += sp.diags(inertial_jacobian, format='csr')
+                else:
+                    self._jacobian[ndof_diag, ndof_diag] += inertial_jacobian
 
             # Handle free DOF components
             self._f_free[:] = self._forces[robot.state.free_dof]
-            self._j_free[:] = self._jacobian[np.ix_(
-                robot.state.free_dof, robot.state.free_dof)]
+            if robot.sim_params.sparse:
+                self._j_free = self._jacobian[robot.state.free_dof,
+                                              :][:, robot.state.free_dof]
+            else:
+                self._j_free[:] = self._jacobian[np.ix_(
+                    robot.state.free_dof, robot.state.free_dof)]
 
             # Linear system solver
             if np.linalg.norm(self._f_free) < self._min_force:
@@ -124,7 +133,7 @@ class TimeStepper(metaclass=abc.ABCMeta):
                 print("iter: {}, error: {:.3f}".format(iteration, err))
             iteration += 1
 
-        if iteration_limit:
+        if iteration >= robot.sim_params.max_iter:
             raise ValueError(
                 "Iteration limit {} reached before convergence".format(robot.sim_params.max_iter))
 
@@ -138,10 +147,10 @@ class TimeStepper(metaclass=abc.ABCMeta):
 
     def _compute_acceleration(self, robot: SoftRobot, q: np.ndarray) -> np.ndarray:
         return np.zeros_like(q)
-    
-    def _compute_velocity(self, robot: SoftRobot, q:np.ndarray) -> np.ndarray:
+
+    def _compute_velocity(self, robot: SoftRobot, q: np.ndarray) -> np.ndarray:
         return (q - robot.state.q) / robot.sim_params.dt
-    
+
     def _compute_evaluation_position(self, robot: SoftRobot, q: np.ndarray) -> np.ndarray:
         return q
 
@@ -150,33 +159,42 @@ class TimeStepper(metaclass=abc.ABCMeta):
 
     def _compute_forces_and_jacobian(self, robot: SoftRobot, q, u):
         """ Sets self._forces and self._jacobian to sum of external/internal forces """
-        self._forces[:].fill(0.0)
-        self._jacobian[:].fill(0.0)
+        self._forces.fill(0.0)
+
+        if robot.sim_params.sparse:
+            self._jacobian = sp.csr_matrix(
+                (self._n_dof, self._n_dof), dtype=np.float64)
+        else:
+            self._jacobian.fill(0.0)
 
         # Compute reference frames and material directors
-        a1_iter, a2_iter = robot.compute_time_parallel(robot.state.a1, robot.state.q, q)
+        a1_iter, a2_iter = robot.compute_time_parallel(
+            robot.state.a1, robot.state.q, q)
         m1, m2 = robot.compute_material_directors(q, a1_iter, a2_iter)
         ref_twist = robot.compute_reference_twist(
             robot.bend_twist_springs, q, a1_iter, robot.state.ref_twist)
         tau = robot.update_pre_comp_shell(q)
 
-        new_state = RobotState.init(q, a1_iter, a2_iter, m1, m2, ref_twist, tau)
+        new_state = RobotState.init(
+            q, a1_iter, a2_iter, m1, m2, ref_twist, tau)
 
         # Add elastic forces
         for energy in self.__elastic_energies:
+            # J is now scipy crc sparse
             F, J = energy.grad_hess_energy_linear_elastic(
-                new_state)
-            self._forces[:] += F
-            self._jacobian[:] += J
+                new_state, robot.sim_params.sparse)
+            self._forces -= F
+            self._jacobian -= J
 
         # Add external forces
         # TODO: Make this also a list
         if "gravity" in robot.env.ext_force_list:
-            self._forces[:] += compute_gravity_forces(robot)
+            self._forces -= compute_gravity_forces(robot)
+        # ignore for now
         if "aerodynamics" in robot.env.ext_force_list:
             F, J, = compute_aerodynamic_forces_vectorized(robot, q, u)
-            self._forces[:] += F
-            self._jacobian[:] += J
+            self._forces -= F
+            self._jacobian -= J  # FIXME: Sparse option
 
     def _converged(self,
                    err: float,

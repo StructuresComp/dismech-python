@@ -38,3 +38,4 @@ class SimParams:
     ftol: float
     dtol: float
     solver: str = 'np'
+    sparse: bool = False

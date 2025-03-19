@@ -204,7 +204,7 @@ class SoftRobot:
             edge_dofs = 3 * self.__n_nodes + np.arange(self.__n_edges_dof)
             mass[edge_dofs] = edge_mass
 
-        return np.diag(mass)
+        return mass
 
     def _get_ref_len(self) -> np.ndarray:
         vectors = self.__nodes[self.__edges[:, 1]] - \
@@ -242,8 +242,7 @@ class SoftRobot:
         return 0.5 * np.linalg.norm(cross, axis=1)
 
     def scale_mass_matrix(self, nodes: int | np.ndarray, scale: float):
-        self.__mass_matrix[np.ix_(self.map_node_to_dof(
-            nodes), self.map_node_to_dof(nodes))] *= scale
+        self.__mass_matrix[self.map_node_to_dof(nodes)] *= scale
 
     def _init_curvature_midedge(self, geo: Geometry) -> typing.Tuple[np.ndarray, ...]:
         self.__face_edges = geo.face_edges

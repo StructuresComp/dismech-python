@@ -100,6 +100,7 @@ def get_animation(robot, t, qs, options: AnimationOptions):
                         init_func=init, interval=50, blit=False)
     return ani
 
+
 def rgba_to_str(color):
     """Convert an RGBA tuple to a Plotly rgba string."""
     if isinstance(color, tuple) and len(color) == 4:
@@ -107,28 +108,29 @@ def rgba_to_str(color):
         return f"rgba({int(r*255)}, {int(g*255)}, {int(b*255)}, {a})"
     return color
 
+
 def get_interactive_animation_plotly(robot, t, qs, options: AnimationOptions):
     n_frames = qs.shape[0]
     n_nodes = len(robot.node_dof_indices)
-    
+
     # Precompute nodes for each frame: nodes_all[frame][node] gives a (x,y,z)
     node_dof_list = [robot.map_node_to_dof(i) for i in range(n_nodes)]
     nodes_all = np.array([[q[dofs] for dofs in node_dof_list] for q in qs])
-    
+
     # Identify fixed nodes based on fixed dofs
     fixed_set = set(robot.fixed_dof)
     node_is_fixed = np.array([all(d in fixed_set for d in dofs)
                               for dofs in node_dof_list])
-    
+
     # Precompute indices for free and fixed nodes
     free_indices = np.where(~node_is_fixed)[0]
     fixed_indices = np.where(node_is_fixed)[0]
-    
+
     # Create an initial frame (frame 0)
     nodes0 = nodes_all[0]
     free_nodes0 = nodes0[free_indices]
     fixed_nodes0 = nodes0[fixed_indices]
-    
+
     # Scatter for free nodes
     free_scatter = go.Scatter3d(
         x=free_nodes0[:, 0],
@@ -138,7 +140,7 @@ def get_interactive_animation_plotly(robot, t, qs, options: AnimationOptions):
         marker=dict(size=5, color=options.free_node_color),
         name='Free Nodes'
     )
-    
+
     # Scatter for fixed nodes
     fixed_scatter = go.Scatter3d(
         x=fixed_nodes0[:, 0],
@@ -148,7 +150,7 @@ def get_interactive_animation_plotly(robot, t, qs, options: AnimationOptions):
         marker=dict(size=5, color=options.fixed_node_color),
         name='Fixed Nodes'
     )
-    
+
     # Create one trace for all edges (using None to separate segments)
     edge_x, edge_y, edge_z = [], [], []
     for (i, j) in robot.edges:
@@ -163,7 +165,7 @@ def get_interactive_animation_plotly(robot, t, qs, options: AnimationOptions):
         line=dict(color=options.edge_color, width=2),
         name='Edges'
     )
-    
+
     # Use a Mesh3d trace for triangular faces
     # Note: Mesh3d uses a single set of vertices, so the connectivity (I, J, K) remains the same.
     I, J, K = [], [], []
@@ -183,30 +185,30 @@ def get_interactive_animation_plotly(robot, t, qs, options: AnimationOptions):
         name='Faces',
         showscale=False
     )
-    
+
     # Set up camera using the provided camera_view (conversion from elevation/azimuth)
     elev, azim = options.camera_view
-    r = 2  # Radius for camera distance (adjust as needed)
+    r = np.linalg.norm(np.ptp(nodes_all, axis=(0, 1))) * 1.5  # Radius for camera distance (adjust as needed)
     camera_eye = dict(
         x=r * math.cos(math.radians(elev)) * math.cos(math.radians(azim)),
         y=r * math.cos(math.radians(elev)) * math.sin(math.radians(azim)),
         z=r * math.sin(math.radians(elev))
     )
-    
+
     # Build animation frames
     frames = []
     for frame_idx in range(n_frames):
         nodes = nodes_all[frame_idx]
         free_nodes_frame = nodes[free_indices]
         fixed_nodes_frame = nodes[fixed_indices]
-        
+
         # Update edges for current frame
         edge_x_frame, edge_y_frame, edge_z_frame = [], [], []
         for (i, j) in robot.edges:
             edge_x_frame += [nodes[i][0], nodes[j][0], None]
             edge_y_frame += [nodes[i][1], nodes[j][1], None]
             edge_z_frame += [nodes[i][2], nodes[j][2], None]
-        
+
         frame_data = [
             dict(type='scatter3d',
                  name='Free Nodes',
@@ -232,14 +234,21 @@ def get_interactive_animation_plotly(robot, t, qs, options: AnimationOptions):
                  j=J,
                  k=K)
         ]
-        frames.append(dict(name=str(frame_idx),
-                           data=frame_data,
-                           layout=dict(annotations=[dict(
-                               text=f"Time: {t[frame_idx]:.2f}s (Step: {frame_idx+1}/{n_frames})",
-                               showarrow=False,
-                               x=0.05, y=0.95, xref="paper", yref="paper"
-                           )])))
-    
+        frames.append(dict(
+            name=str(frame_idx),
+            data=frame_data,
+            layout=dict(
+                annotations=[dict(
+                    text=f"Time: {t[frame_idx]:.2f}s (Step: {frame_idx+1}/{n_frames})",
+                    showarrow=False,
+                    x=0.05, y=0.95, xref="paper", yref="paper"
+                )],
+                scene=dict(
+                    camera=dict(eye=camera_eye)
+                )
+            )
+        ))
+
     # Define layout with slider and play/pause buttons
     layout = go.Layout(
         title=options.title,
@@ -248,9 +257,12 @@ def get_interactive_animation_plotly(robot, t, qs, options: AnimationOptions):
             yaxis_title='Y Position',
             zaxis_title='Z Position',
             camera=dict(eye=camera_eye),
-            xaxis=dict(range=options.x_lim if options.x_lim is not None else [nodes_all[:, :, 0].min(), nodes_all[:, :, 0].max()]),
-            yaxis=dict(range=options.y_lim if options.y_lim is not None else [nodes_all[:, :, 1].min(), nodes_all[:, :, 1].max()]),
-            zaxis=dict(range=options.z_lim if options.z_lim is not None else [nodes_all[:, :, 2].min(), nodes_all[:, :, 2].max()])
+            xaxis=dict(range=options.x_lim if options.x_lim is not None else [
+                       nodes_all[:, :, 0].min(), nodes_all[:, :, 0].max()]),
+            yaxis=dict(range=options.y_lim if options.y_lim is not None else [
+                       nodes_all[:, :, 1].min(), nodes_all[:, :, 1].max()]),
+            zaxis=dict(range=options.z_lim if options.z_lim is not None else [
+                       nodes_all[:, :, 2].min(), nodes_all[:, :, 2].max()])
         ),
         updatemenus=[{
             "buttons": [
@@ -289,12 +301,12 @@ def get_interactive_animation_plotly(robot, t, qs, options: AnimationOptions):
             "currentvalue": {"prefix": "Frame: "}
         }]
     )
-    
+
     # Create the figure with initial data and frames
     fig = go.Figure(
         data=[free_scatter, fixed_scatter, edge_trace, face_trace],
         layout=layout,
         frames=frames
     )
-    
+
     return fig

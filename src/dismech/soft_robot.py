@@ -411,12 +411,12 @@ class SoftRobot:
     # Perturb system
 
     def move_nodes(self, nodes: typing.List[int] | np.ndarray, perturbation: np.ndarray, axis: int | None = None):
-        q = self.state.q
+        q = np.copy(self.state.q)
         q[self._get_node_dof_mask(nodes, axis)] += perturbation
         return self.update(q)
 
     def twist_edges(self, edges: typing.List[int] | np.ndarray, perturbation: np.ndarray):
-        q = self.state.q
+        q = np.copy(self.state.q)
         q[self.map_edge_to_dof(edges)] += perturbation
         return self.update(q)
 

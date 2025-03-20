@@ -151,6 +151,12 @@ class TimeStepper(metaclass=abc.ABCMeta):
     def _compute_velocity(self, robot: SoftRobot, q: np.ndarray) -> np.ndarray:
         return (q - robot.state.q) / robot.sim_params.dt
 
+    def compute_total_elastic_energy(self, state: RobotState) -> np.ndarray:
+        total = 0.0
+        for energy in self.__elastic_energies:
+            total += energy.get_energy_linear_elastic(state)
+        return total
+
     def _compute_evaluation_position(self, robot: SoftRobot, q: np.ndarray) -> np.ndarray:
         return q
 

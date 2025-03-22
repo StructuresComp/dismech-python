@@ -106,7 +106,7 @@ class TimeStepper(metaclass=abc.ABCMeta):
             self._f_free[:] = self._forces[robot.state.free_dof]
             if robot.sim_params.sparse:
                 self._j_free = self._jacobian[robot.state.free_dof,
-                                              :][:, robot.state.free_dof]
+                              :][:, robot.state.free_dof]
             else:
                 self._j_free[:] = self._jacobian[np.ix_(
                     robot.state.free_dof, robot.state.free_dof)]

@@ -15,7 +15,7 @@ class Visualizer(metaclass=abc.ABCMeta):
 class MatplotlibLogger:
     """Logs the (x,y,z) coordinates of provided nodes on a position vs time line graph."""
     
-    def __init__(self, nodes: np.ndarray, robot):
+    def __init__(self, nodes: np.ndarray):
         self._nodes = nodes
         self.time_history = []
         self.q_history = []

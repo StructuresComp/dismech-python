@@ -2,7 +2,6 @@ import abc
 
 import numpy as np
 import scipy.sparse as sp
-import pypardiso
 
 
 class Solver(metaclass=abc.ABCMeta):
@@ -30,10 +29,17 @@ class NumpySolver(Solver):
 class PardisoSolver(Solver):
 
     def __init__(self, **kwargs):
-        pass
+        try:
+            import pypardiso
+        except ImportError:
+            raise ImportError("pypardiso is required for PardisoSolver but not installed. Please install it using:\n"
+                              "pip install pypardiso"
+                              )
+        else:
+            self.pardiso = pypardiso
 
     def solve(self, J: np.ndarray | sp.csr_matrix, F: np.ndarray):
         if isinstance(J, np.ndarray):
             print("[WARNING] Using Pardiso (a sparse solver) for a dense matrix")
             J = sp.csr_matrix(J)
-        return pypardiso.spsolve(J, F)
+        return self.pardiso.spsolve(J, F)

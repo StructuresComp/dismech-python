@@ -4,13 +4,13 @@ import typing
 
 import scipy.sparse as sp
 import numpy as np
-from tqdm.notebook import tqdm
 
 from ..soft_robot import SoftRobot
 from ..state import RobotState
 from ..elastics import ElasticEnergy, StretchEnergy, HingeEnergy, BendEnergy, TriangleEnergy, TwistEnergy
 from ..external_forces import compute_gravity_forces, compute_aerodynamic_forces_vectorized
 from ..solvers import Solver, NumpySolver, PardisoSolver
+from ..visualizer import Visualizer
 
 _SOLVERS: typing.Dict[str, Solver] = {
     'np': NumpySolver, 'pardiso': PardisoSolver}
@@ -47,16 +47,22 @@ class TimeStepper(metaclass=abc.ABCMeta):
         # Simulate callbacks
         self.before_step = None
 
-    def simulate(self, robot: SoftRobot = None) -> typing.List[SoftRobot]:
+    def simulate(self, robot: SoftRobot = None, viz: Visualizer = None) -> typing.List[SoftRobot]:
         robot = robot or self.robot
         steps = int(robot.sim_params.total_time / robot.sim_params.dt) + 1
 
         ret = []
-        for i in tqdm(range(1, steps)):
+        if viz is not None:
+            viz.update(robot, 0)
+        for i in range(1, steps):
             if self.before_step is not None:
                 robot = self.before_step(robot, i * robot.sim_params.dt)
             robot = self.step(robot)
-            ret.append(robot)
+            if viz is not None and i % robot.sim_params.plot_step == 0:
+                print(i, robot.sim_params.log_step)
+                viz.update(robot, i * robot.sim_params.dt)
+            if robot.sim_params.log_data and i % robot.sim_params.log_step == 0:
+                ret.append(robot)
 
         return ret
 
@@ -106,7 +112,7 @@ class TimeStepper(metaclass=abc.ABCMeta):
             self._f_free[:] = self._forces[robot.state.free_dof]
             if robot.sim_params.sparse:
                 self._j_free = self._jacobian[robot.state.free_dof,
-                              :][:, robot.state.free_dof]
+                                              :][:, robot.state.free_dof]
             else:
                 self._j_free[:] = self._jacobian[np.ix_(
                     robot.state.free_dof, robot.state.free_dof)]

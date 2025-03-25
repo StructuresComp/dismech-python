@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "dismech"
 dynamic = ["version"]
-dependencies = ["numpy", "scipy", "tqdm", "numba", "matplotlib", "plotly", "ipywidgets", "nbformat"]
+dependencies = ["numpy", "scipy", "numba", "matplotlib", "plotly", "ipywidgets", "nbformat"]
 
 # for pytest
 [tool.pytest.ini_options]

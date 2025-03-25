@@ -5,3 +5,4 @@ from .environment import Environment
 from .time_steppers import ImplicitEulerTimeStepper, NewmarkBetaTimeStepper, ImplicitMidpointTimeStepper
 from .animation import get_animation, get_interactive_animation_plotly, AnimationOptions
 from .elastics import BendEnergy, StretchEnergy, TriangleEnergy, HingeEnergy
+from .visualizer import MatplotlibLogger

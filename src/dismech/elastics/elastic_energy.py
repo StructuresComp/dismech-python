@@ -46,10 +46,12 @@ class ElasticEnergy(metaclass=PostInitABCMeta):
         """Return a M x N x 3 matrix """
         return q[self._node_dof_ind].reshape(self._n_nodes, -1, 3)
 
-    def get_energy_linear_elastic(self, state: RobotState):
+    def get_energy_linear_elastic(self, state: RobotState, output_scalar: bool = True):
         strain = self.get_strain(state)
         del_strain = (strain - self._nat_strain).reshape(-1, self._n_K)
-        return 0.5 * np.sum(self._K.reshape(-1, self._n_K) * del_strain**2)
+        if output_scalar:
+            return 0.5 * np.sum(self._K.reshape(-1, self._n_K) * del_strain**2)
+        return 0.5 * self._K.reshape(-1, self._n_K) * del_strain**2
 
     def grad_hess_energy_linear_elastic(self, state: RobotState, sparse: bool = False) -> typing.Tuple[np.ndarray, np.ndarray] | typing.Tuple[np.ndarray, sp.csr_array]:
         strain = self.get_strain(state)

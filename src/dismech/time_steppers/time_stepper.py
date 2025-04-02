@@ -198,6 +198,11 @@ class TimeStepper(metaclass=abc.ABCMeta):
             self._forces -= F
             self._jacobian -= J
 
+            # FDM check
+            _,_, fdm_check_grad, fdm_check_hess = energy.fdm_check_grad_hess_strain(new_state)
+            print("gradient of strain passed FDM check:", fdm_check_grad)
+            print("hessian of strain passed FDM check:", fdm_check_hess)
+
         # Add external forces
         # TODO: Make this also a list
         if "gravity" in robot.env.ext_force_list:

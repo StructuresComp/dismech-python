@@ -59,7 +59,6 @@ class TimeStepper(metaclass=abc.ABCMeta):
                 robot = self.before_step(robot, i * robot.sim_params.dt)
             robot = self.step(robot)
             if viz is not None and i % robot.sim_params.plot_step == 0:
-                print(i, robot.sim_params.log_step)
                 viz.update(robot, i * robot.sim_params.dt)
             if robot.sim_params.log_data and i % robot.sim_params.log_step == 0:
                 ret.append(robot)

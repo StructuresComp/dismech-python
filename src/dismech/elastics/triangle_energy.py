@@ -59,14 +59,14 @@ class TriangleEnergy(ElasticEnergy):
         c = 1 / (self._A[:, None] * self._ls * np.sum(t /
                  np.linalg.norm(t, axis=1, keepdims=True) * tau, axis=1))
 
-        return t, f, c, unit_norm
+        return t, f, c, unit_norm, np.linalg.norm(norm, axis=1) / 2
 
-    def _delfi_by_delpk(self, t, tau, unit_norm):
+    def _delfi_by_delpk(self, t, tau, unit_norm, A):
         """
         Returns a N x 3 x 3 x 3 tensor where [N, i, j] corresponds to delfi vector for t_i and tau(:,j).
         """
         factor = np.einsum('njk,njl->nlk', tau, t) / \
-            (2 * self._A)[:, None, None]
+            (2 * A)[:, None, None]
         return factor[..., None] * unit_norm[:, None, None, :]
 
     def _ddelfi_by_del_p_k1_p_k2(self, t, tau, unit_norm):
@@ -85,9 +85,6 @@ class TriangleEnergy(ElasticEnergy):
 
         return np.einsum('nij,nklm,n->nikjlm', t_dot_tau, outer_sum, scale)
 
-    def get_energy_linear_elastic(self, state: RobotState) -> np.ndarray:
-        return np.empty(0)
-
     # Placeholders
 
     def get_strain(self, state: RobotState) -> np.ndarray:
@@ -95,11 +92,61 @@ class TriangleEnergy(ElasticEnergy):
 
     def grad_hess_strain(self, state: RobotState) -> typing.Tuple[np.ndarray, np.ndarray]:
         return np.empty(0), np.empty(0)
+    
+    # Override
+
+    def get_energy_linear_elastic(self, state: RobotState) -> np.ndarray:
+        tau = self._get_tau(state.tau)
+        xis = self._get_xi_is(state.q)
+        t, f, c, _, _ = self._get_t_f_c(state.q, tau)
+
+        # s_s terms
+        s_xis = self._s_s * xis - f
+        s_initxis = self._s_s * self._init_xis - self._init_fs
+
+        # c terms
+        ci_cj = np.einsum('ni, nj->nij', c, c)
+        ci_init_cj = np.einsum('ni, nj->nij', c, self._init_cs)
+        init_ci_init_cj = np.einsum(
+            'ni, nj->nij', self._init_cs, self._init_cs)
+
+        # for E1
+        t_dot_t = np.einsum('nij,nik->njk', t, t)
+        t_dot_init_t = np.einsum('nij,nik->njk', t, self._init_ts)
+        init_t_dot_init_t = np.einsum(
+            'nij,nik->njk', self._init_ts, self._init_ts)
+        t_dot_t_sq = t_dot_t ** 2
+        t_dot_init_t_sq = t_dot_init_t ** 2
+        init_t_dot_init_t_sq = init_t_dot_init_t ** 2
+
+        # for E2
+        t_norm_sq = np.diagonal(t_dot_t, axis1=1, axis2=2)
+        t_norms_sq_sq = np.einsum('ni,nj->nij', t_norm_sq, t_norm_sq)
+        t_norms_sq_ls_sq = np.einsum('ni,nj->nij', t_norm_sq, self._ls**2)
+        ls_sq_ls_sq = np.einsum('ni,nj->nij', self._ls**2, self._ls**2)
+
+        # Extend to N x 3 x 3
+        s_xis_i = s_xis[:, :, None]
+        s_xis_j = s_xis[:, None, :]
+        s_initxis_i = s_initxis[:, :, None]
+        s_initxis_j = s_initxis[:, None, :]
+
+        e_coeff1 = ci_cj * s_xis_i * s_xis_j
+        e_coeff2 = init_ci_init_cj * s_initxis_i * s_initxis_j
+        e_coeff3 = 2 * ci_init_cj * s_xis_i * s_initxis_j
+
+        def compute_e(factor1, factor2, factor3):
+            return np.einsum('nij->n', e_coeff1 * factor1 + e_coeff2 * factor2 + e_coeff3 * factor3)
+
+        e1 = compute_e(t_dot_t_sq, init_t_dot_init_t_sq, t_dot_init_t_sq)
+        e2 = compute_e(t_norms_sq_sq, ls_sq_ls_sq, t_norms_sq_ls_sq)
+
+        return self._kb * ((1-self._nu) * e1 + self._nu*e2) * self._A
 
     def grad_hess_energy_linear_elastic(self, state: RobotState, sparse=False) -> typing.Tuple[np.ndarray, np.ndarray]:
         tau = self._get_tau(state.tau)
         xis = self._get_xi_is(state.q)
-        t, f, c, unit_norm = self._get_t_f_c(state.q, tau)
+        t, f, c, unit_norm, A = self._get_t_f_c(state.q, tau)
         N = t.shape[0]
 
         # s_s terms
@@ -127,7 +174,7 @@ class TriangleEnergy(ElasticEnergy):
         t_norms_sq_ls_sq = np.einsum('ni,nj->nij', t_norm_sq, self._ls**2)
 
         # delfi
-        delfi = self._delfi_by_delpk(t, tau, unit_norm)
+        delfi = self._delfi_by_delpk(t, tau, unit_norm, A)
         ddelfi = self._ddelfi_by_del_p_k1_p_k2(t, tau, unit_norm)
         delfi_sq = compute_delfi_sq_jit(delfi)
 

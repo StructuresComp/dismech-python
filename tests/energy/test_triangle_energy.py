@@ -25,6 +25,7 @@ def triangle_energy_helper(robot, truth):
                                 np.ndarray([]),
                                 truth['tau_0'])
     Fb, Jb = energy.grad_hess_energy_linear_elastic(new_state)
+    e = energy.get_energy_linear_elastic(new_state)
     assert (np.allclose(Fb, truth['Fb_shell'].flatten()))
     assert (np.allclose(Jb, truth['Jb_shell']))
 

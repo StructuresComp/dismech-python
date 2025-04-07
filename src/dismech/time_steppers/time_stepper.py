@@ -59,7 +59,6 @@ class TimeStepper(metaclass=abc.ABCMeta):
                 robot = self.before_step(robot, i * robot.sim_params.dt)
             robot = self.step(robot)
             if viz is not None and i % robot.sim_params.plot_step == 0:
-                print(i, robot.sim_params.log_step)
                 viz.update(robot, i * robot.sim_params.dt)
             if robot.sim_params.log_data and i % robot.sim_params.log_step == 0:
                 ret.append(robot)
@@ -197,6 +196,11 @@ class TimeStepper(metaclass=abc.ABCMeta):
                 new_state, robot.sim_params.sparse)
             self._forces -= F
             self._jacobian -= J
+
+            # FDM check
+            _,_, fdm_check_grad, fdm_check_hess = energy.fdm_check_grad_hess_strain(new_state)
+            print("gradient of strain passed FDM check:", fdm_check_grad)
+            print("hessian of strain passed FDM check:", fdm_check_hess)
 
         # Add external forces
         # TODO: Make this also a list

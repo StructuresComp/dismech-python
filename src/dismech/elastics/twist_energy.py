@@ -23,17 +23,13 @@ class TwistEnergy(ElasticEnergy):
             self._sign_grad[:, dof_idx] = signs
         self._sign_hess = self._sign_grad[:, :, None] * \
             self._sign_grad[:, None, :]
-
-        self.theta_e = np.empty(N)
-        self.theta_f = np.empty(N)
-
-    def _set_thetas(self, q: np.ndarray):
-        self.theta_e[:] = q[self._edges_ind[:, 0]] * self._sgn[:, 0]
-        self.theta_f[:] = q[self._edges_ind[:, 1]] * self._sgn[:, 1]
+            
+    def _get_thetas(self, q: np.ndarray):
+        return q[self._edges_ind[:, 0]] * self._sgn[:, 0], q[self._edges_ind[:, 1]] * self._sgn[:, 1]
 
     def get_strain(self, state: RobotState) -> np.ndarray:
-        self._set_thetas(state.q)
-        return self.theta_f - self.theta_e + state.ref_twist
+        theta_e, theta_f = self._get_thetas(state.q)
+        return theta_f - theta_e + state.ref_twist
 
     def grad_hess_strain(self, state: RobotState) -> typing.Tuple[np.ndarray, np.ndarray]:
         n0p, n1p, n2p = self._get_node_pos(state.q)

@@ -25,7 +25,8 @@ class ElasticEnergy(metaclass=PostInitABCMeta):
     def __init__(self, K: np.ndarray,
                  nodes_ind: np.ndarray,
                  ind: np.ndarray,
-                 initial_state: RobotState):
+                 initial_state: RobotState,
+                 get_strain = None):
         self._K = K
         self._n_K = 1 if self._K.ndim == 1 else self._K.shape[1]
 
@@ -41,12 +42,25 @@ class ElasticEnergy(metaclass=PostInitABCMeta):
         self._rows = np.repeat(self._ind, stencil_n_dof, axis=1).ravel()
         self._cols = np.tile(self._ind, (1, stencil_n_dof)).ravel()
 
+        if get_strain is None:
+            self._nat_strain = None
+        else:
+            self._nat_strain = get_strain(self._get_node_pos(self._initial_state.q)).copy()
+            
+
     def __post_init__(self):
-        self._nat_strain = self.get_strain(self._initial_state).copy()
+        if self._nat_strain is None:
+            self._nat_strain = self.get_strain(self._initial_state).copy()
+        else:
+            self._nat_strain = np.where(np.isnan(self._nat_strain), self.get_strain(self._initial_state), self._nat_strain)
 
     def _get_node_pos(self, q: np.ndarray):
         """Return a M x N x 3 matrix """
         return q[self._node_dof_ind].reshape(self._n_nodes, -1, 3)
+    
+    def set_nat_strain(self, strain: np.ndarray):
+        if strain.shape == self._nat_strain.shape:
+            self._nat_strain = strain
 
     def get_energy_linear_elastic(self, state: RobotState, output_scalar: bool = True):
         strain = self.get_strain(state)

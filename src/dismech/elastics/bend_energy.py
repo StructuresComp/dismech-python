@@ -7,12 +7,13 @@ from .elastic_energy import ElasticEnergy
 
 
 class BendEnergy(ElasticEnergy):
-    def __init__(self, springs: typing.List[BendTwistSpring], initial_state: RobotState):
+    def __init__(self, springs: typing.List[BendTwistSpring], initial_state: RobotState, get_strain = None):
         super().__init__(
             np.array([s.stiff_EI / s.voronoi_len for s in springs]),
             np.array([s.nodes_ind for s in springs]),
             np.array([s.ind for s in springs]),
-            initial_state
+            initial_state,
+            get_strain
         )
         self._sgn = np.array([s.sgn for s in springs])
         self._edges_ind = np.array([s.edges_ind for s in springs])

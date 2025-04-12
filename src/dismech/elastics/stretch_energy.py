@@ -7,7 +7,7 @@ from ..springs import StretchSpring
 
 
 class StretchEnergy(ElasticEnergy):
-    def __init__(self, springs: typing.List[StretchSpring], initial_state: RobotState):
+    def __init__(self, springs: typing.List[StretchSpring], initial_state: RobotState, get_strain = None):
         self.l_k = np.array([s.ref_len for s in springs], dtype=np.float64)
         self.inv_l_k = 1.0 / self.l_k
 
@@ -15,7 +15,8 @@ class StretchEnergy(ElasticEnergy):
             self.l_k * np.array([s.EA for s in springs], dtype=np.float64),
             np.array([s.nodes_ind for s in springs], dtype=np.int64),
             np.array([s.ind for s in springs], dtype=np.int64),
-            initial_state
+            initial_state,
+            get_strain
         )
 
     def get_strain(self, state: RobotState) -> np.ndarray:

@@ -10,11 +10,12 @@ from .triangle_helper import compute_dp_jit, compute_delfi_sq_jit, compute_dpdp_
 
 
 class TriangleEnergy(ElasticEnergy):
-    def __init__(self, springs: typing.List[TriangleSpring], initial_state: RobotState):
+    def __init__(self, springs: typing.List[TriangleSpring], initial_state: RobotState, get_strain = None):
         super().__init__(np.array([s.kb for s in springs]),
                          np.array([s.nodes_ind for s in springs]),
                          np.array([s.ind for s in springs]),
-                         initial_state)
+                         initial_state,
+                         get_strain)
         self._edges_ind = np.array([s.ind[-3:] for s in springs])
         self._face_edges = np.array([s.face_edges for s in springs])
 

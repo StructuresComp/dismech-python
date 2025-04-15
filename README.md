@@ -2,7 +2,7 @@
 |  |  |
 |:--:|:--:|
 |![contortion](docs/contortion.gif) Manually contorted 3D discrete rod. | ![hexparachute](docs/hex_parachute.gif) Hex parachute falling with drag. |
-|![shellcantilever](docs/newmark_beta_shell_cantilever_5s.gif) 3D shell cantilever: energy-conserving Newmark-beta ($\gamma=0.5$ $\beta=0.25$) integration. | ![rodcantilever](docs/implicit_midpoint_cantilever_30s.gif) 3D cantilever rod: energy-conserving implicit midpoint integration. |
+|![shellcantilever](docs/newmark_beta_shell_cantilever_5s.gif) Energy-conserving Newmark-beta ($\gamma=0.5$ $\beta=0.25$) integration. | ![rodcantilever](docs/implicit_midpoint_cantilever_30s.gif) Energy-conserving implicit midpoint integration. |
 
 
 A discrete differential geometry deformable structure simulator based on [Dismech](https://github.com/StructuresComp/dismech-rods).
@@ -24,7 +24,7 @@ pip install -e .                    # Editable installation for development
 
 - [x] 3D [discrete elastic rod](https://www.cs.columbia.edu/cg/pdfs/143-rods.pdf) stretching, bending and twisting.
 - [x] 3D discrete elastic shell hinge and mid-edge bending.
-- [x] Pytest numerical validation suite (compared against Dismech Matlab).
+- [x] Pytest numerical validation suite (compared against [Dismech Matlab](https://github.com/StructuresComp/dismech-matlab)).
 - [x] [Dismech Matlab](https://github.com/StructuresComp/dismech-matlab) compatabile input format.
 - [x] Implicit integration schemes (Euler and Newmark-beta).
 - [x] Dense and sparse ([PyPardiso](https://pypi.org/project/pypardiso/)) solvers.
@@ -39,7 +39,7 @@ To run example experiments, please run the python notebooks located in experimen
 ## TODO
 
 - [ ] [IMC](https://arxiv.org/abs/2205.10309) rod contact and friction modeling.
-- [ ] Shell contact and friciton modeling.
+- [ ] Shell contact and friction modeling.
 - [ ] Sphinx documentation.
 - [ ] Slinky NN demonstration.
 

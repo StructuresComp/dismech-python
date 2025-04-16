@@ -1,7 +1,7 @@
 # dismech-python
 |  |  |
 |:--:|:--:|
-|![contortion](docs/contortion.gif) Manually contorted 3D discrete rod. | ![hexparachute](docs/hex_parachute.gif) Hex parachute falling with drag. |
+|![contortion](docs/contortion.gif) Straight contortion of 3D discrete rod. | ![hexparachute](docs/hex_parachute.gif) Hex parachute falling with drag. |
 |![shellcantilever](docs/newmark_beta_shell_cantilever_5s.gif) Energy-conserving Newmark-beta ($\gamma=0.5$ $\beta=0.25$) integration. | ![rodcantilever](docs/implicit_midpoint_cantilever_30s.gif) Energy-conserving implicit midpoint integration. |
 
 

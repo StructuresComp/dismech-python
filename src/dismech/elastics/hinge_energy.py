@@ -1,20 +1,18 @@
 import typing
 import numpy as np
 
-from .elastic_energy import ElasticEnergy
+from .elastic_energyv2 import ElasticEnergy2
 from ..state import RobotState
 from ..springs import HingeSpring
 
 
-class HingeEnergy(ElasticEnergy):
-    def __init__(self, springs: typing.List[HingeSpring], initial_state: RobotState, get_strain = None):
-        super().__init__(
-            np.array([s.kb for s in springs]),
-            np.array([s.nodes_ind for s in springs]),
-            np.array([s.ind for s in springs]),
-            initial_state,
-            get_strain
-        )
+class HingeEnergy(ElasticEnergy2):
+    def __init__(self, springs: typing.List[HingeSpring], initial_state: RobotState):
+        super().__init__(springs, initial_state)
+
+    @property
+    def K(self):
+        return self._springs.kb
 
     def get_strain(self, state: RobotState) -> np.ndarray:
         n0p, n1p, n2p, n3p = self._get_node_pos(state.q)

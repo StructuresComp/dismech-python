@@ -10,7 +10,7 @@ from .frame_util import compute_reference_twist, compute_tfc_midedge, parallel_t
 from .environment import Environment
 from .geometry import Geometry
 from .params import GeomParams, Material, SimParams
-from .springs import BendTwistSpring, StretchSpring, HingeSpring, TriangleSpring
+from .springs import BendTwistSpring, StretchSprings, HingeSprings, TriangleSpring
 
 
 _TANGENT_THRESHOLD = 1e-10
@@ -107,19 +107,16 @@ class SoftRobot:
     def _init_springs(self, geo: Geometry):
         """Initialize spring list objects"""
         n_rod = geo.rod_stretch_springs.shape[0]
+        n_shell = geo.shell_stretch_springs.shape[0]
 
-        # Stretch springs
-        rod_springs = [StretchSpring(spring,
-                                     self.__ref_len[i],
-                                     self.__EA,
-                                     self.map_node_to_dof)
-                       for i, spring in enumerate(geo.rod_stretch_springs)]
-        shell_springs = [StretchSpring(spring,
-                                       self.__ref_len[i+n_rod],
-                                       self.__ks[i + n_rod],
-                                       self.map_node_to_dof)
-                         for i, spring in enumerate(geo.shell_stretch_springs)]
-        self.__stretch_springs = rod_springs + shell_springs
+        nodes_ind = np.concat([geo.rod_stretch_springs, 
+                               geo.shell_stretch_springs], axis=0)
+        ref_len = self.__ref_len[:n_rod + n_shell]
+        EA = np.concat([np.full(n_rod, self.__EA),
+                       self.__ks[n_rod:n_rod+n_shell]], axis=0)
+
+        self.__stretch_springs = StretchSprings.from_arrays(
+            nodes_ind, ref_len, EA, self.map_node_to_dof)
 
         # Bend/twist spring
         self.__bend_twist_springs = [
@@ -162,11 +159,8 @@ class SoftRobot:
             self.__shell_hinge_springs = []
         else:
             # Hinge springs
-            self.__shell_hinge_springs = [
-                HingeSpring(spring,
-                            self.__kb,
-                            self.map_node_to_dof)
-                for spring in geo.hinges]
+            kb = np.full(geo.hinges.shape[0], self.__kb)
+            self.__shell_hinge_springs = HingeSprings.from_arrays(geo.hinges, kb, self.map_node_to_dof)
             self.__triangle_springs = []
 
     def _get_mass_matrix(self, geom: GeomParams, material: Material) -> np.ndarray:
@@ -508,12 +502,12 @@ class SoftRobot:
         return self.__bend_twist_springs
 
     @property
-    def stretch_springs(self) -> typing.List[StretchSpring]:
+    def stretch_springs(self) -> StretchSprings:
         """List of stretch spring elements"""
         return self.__stretch_springs
 
     @property
-    def hinge_springs(self) -> typing.List[HingeSpring]:
+    def hinge_springs(self) -> HingeSprings:
         """List of hinge spring elements"""
         return self.__shell_hinge_springs
 

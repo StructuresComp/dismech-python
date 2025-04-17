@@ -1,7 +1,6 @@
 import numpy as np
 import numba
 
-
 @numba.njit(numba.float64[:, :](
     numba.float64[:, :, :],  # dp_coeff1
     numba.float64[:, :, :],  # dp_coeff2
@@ -34,7 +33,6 @@ def compute_dp_jit(dp_coeff1, dp_coeff2, dp_coeff3, factor1, factor2, delfi):
                 dp[n, l, a] = val
     return dp.reshape(N, 9)
 
-
 @numba.njit(numba.float64[:, :, :, :, :, :, :](numba.float64[:, :, :, :]))
 def compute_delfi_sq_jit(delfi):
     N = delfi.shape[0]
@@ -50,7 +48,6 @@ def compute_delfi_sq_jit(delfi):
                                 delfi_sq[n, i, j, a, b, k, c] = delfi[n,
                                                                       i, j, k] * delfi[n, a, b, c]
     return delfi_sq
-
 
 @numba.njit(numba.float64[:, :, :](   # Return type (N, 9, 9)
     numba.float64[:, :, :],  # dp_coeff1

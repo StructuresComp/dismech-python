@@ -229,7 +229,7 @@ class Geometry:
         elif arr2.size:
             return arr2
         else:
-            return np.empty(0)
+            return np.empty((0, 2)) # always edge
 
     @staticmethod
     def from_txt(fname: str) -> "Geometry":

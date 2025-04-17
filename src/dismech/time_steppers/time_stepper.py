@@ -16,6 +16,12 @@ _SOLVERS: typing.Dict[str, Solver] = {
     'np': NumpySolver, 'pardiso': PardisoSolver}
 
 
+STRETCH = 'stretch'
+HINGE = 'hinge'
+MIDEDGE = 'triangle'
+BEND = 'bend'
+TWIST = 'twist'
+
 class TimeStepper(metaclass=abc.ABCMeta):
 
     def __init__(self, robot: SoftRobot, min_force=1e-8, dtype=np.float64):
@@ -23,22 +29,17 @@ class TimeStepper(metaclass=abc.ABCMeta):
         self._min_force = min_force
 
         # Initialize elastics
-        self.__elastic_energies: typing.List[ElasticEnergy] = []
+        self.elastic_energies: typing.List[ElasticEnergy] = {}
         if robot.stretch_springs:
-            self.__elastic_energies.append(
-                StretchEnergy(robot.stretch_springs, robot.state))
+            self.elastic_energies[STRETCH] = StretchEnergy(robot.stretch_springs, robot.state)
         if robot.hinge_springs:
-            self.__elastic_energies.append(
-                HingeEnergy(robot.hinge_springs, robot.state))
+            self.elastic_energies[HINGE] = HingeEnergy(robot.hinge_springs, robot.state)
         if robot.triangle_springs:
-            self.__elastic_energies.append(
-                TriangleEnergy(robot.triangle_springs, robot.state))
+            self.elastic_energies[MIDEDGE] = TriangleEnergy(robot.triangle_springs, robot.state)
         if robot.bend_twist_springs:
-            self.__elastic_energies.append(
-                BendEnergy(robot.bend_twist_springs, robot.state))
+            self.elastic_energies[BEND] = BendEnergy(robot.bend_twist_springs, robot.state)
             if not robot.sim_params.two_d_sim:   # if 3d
-                self.__elastic_energies.append(
-                    TwistEnergy(robot.bend_twist_springs, robot.state))
+                self.elastic_energies[TWIST] = TwistEnergy(robot.bend_twist_springs, robot.state)
 
         # Set solver
         # TODO: figure out how to pass parameters
@@ -51,18 +52,21 @@ class TimeStepper(metaclass=abc.ABCMeta):
         robot = robot or self.robot
         steps = int(robot.sim_params.total_time / robot.sim_params.dt) + 1
 
-        ret = []
         if viz is not None:
             viz.update(robot, 0)
+
+        ret = []
         for i in range(1, steps):
+            # Handle user function
             if self.before_step is not None:
                 robot = self.before_step(robot, i * robot.sim_params.dt)
             robot = self.step(robot)
+
+            # Update on step interval
             if viz is not None and i % robot.sim_params.plot_step == 0:
                 viz.update(robot, i * robot.sim_params.dt)
             if robot.sim_params.log_data and i % robot.sim_params.log_step == 0:
                 ret.append(robot)
-
         return ret
 
     def step(self, robot: SoftRobot = None, debug: bool = False) -> SoftRobot:
@@ -158,7 +162,7 @@ class TimeStepper(metaclass=abc.ABCMeta):
 
     def compute_total_elastic_energy(self, state: RobotState) -> np.ndarray:
         total = 0.0
-        for energy in self.__elastic_energies:
+        for energy in self.elastic_energies:
             total += energy.get_energy_linear_elastic(state)
         return total
 
@@ -190,7 +194,7 @@ class TimeStepper(metaclass=abc.ABCMeta):
             q, a1_iter, a2_iter, m1, m2, ref_twist, tau)
 
         # Add elastic forces
-        for energy in self.__elastic_energies:
+        for energy in self.elastic_energies.values():
             # J is now scipy crc sparse
             F, J = energy.grad_hess_energy_linear_elastic(
                 new_state, robot.sim_params.sparse)

@@ -29,7 +29,6 @@ class MatplotlibLogger:
         self.ax.set_title("Position vs Time")
 
     def update(self, robot, t):
-        """Called periodically with the robot state and time t."""
         inds = robot.map_node_to_dof(self._nodes)
         q = robot.state.q[inds]
 

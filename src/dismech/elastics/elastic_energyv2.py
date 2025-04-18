@@ -71,8 +71,10 @@ class ElasticEnergy2(metaclass=PostInitABCMeta):
         energy = 0.5 * self.K.reshape(-1, self._n_K) * del_strain**2
         return np.sum(energy) if output_scalar else energy
 
-    def _compute_grad_hess_energy_terms(self, del_strain: np.ndarray, grad_strain: np.ndarray, hess_strain: np.ndarray):
-        """ Calculate gradient and hessian of energy with chain rule """
+    def grad_hess_energy_linear_elastic(self, state: RobotState, sparse: bool = False) -> typing.Tuple[np.ndarray, np.ndarray] | typing.Tuple[np.ndarray, sp.csr_array]:
+        del_strain = self._get_del_strain(state)
+        grad_strain, hess_strain = self.grad_hess_strain(state)
+
         K = self.K.reshape(-1, self._n_K)
         gradE_strain = K * del_strain
 
@@ -96,10 +98,8 @@ class ElasticEnergy2(metaclass=PostInitABCMeta):
         if hasattr(self, '_sign_hess'):
             hess_energy *= self._sign_hess
 
-        return grad_energy, hess_energy
+        n_dof = state.q.shape[0]
 
-    def _assemble_force_hessian(self, grad_energy: np.ndarray, hess_energy: np.ndarray, n_dof: int, sparse: bool):
-        """ Accumulate gradient and hessian within global DOF matrices """
         Fs = np.zeros(n_dof)
         np.add.at(Fs, self._springs.ind, -grad_energy)
 
@@ -112,15 +112,6 @@ class ElasticEnergy2(metaclass=PostInitABCMeta):
             np.add.at(Js, (self._springs.ind[:, :, None],
                            self._springs.ind[:, None, :]), -hess_energy)
         return Fs, Js
-
-    def grad_hess_energy_linear_elastic(self, state: RobotState, sparse: bool = False) -> typing.Tuple[np.ndarray, np.ndarray] | typing.Tuple[np.ndarray, sp.csr_array]:
-        del_strain = self._get_del_strain(state)
-        grad_strain, hess_strain = self.grad_hess_strain(state)
-
-        grad_energy, hess_energy = self._compute_grad_hess_energy_terms(
-            del_strain, grad_strain, hess_strain)
-
-        return self._assemble_force_hessian(grad_energy, hess_energy, state.q.shape[0], sparse)
 
     @abc.abstractmethod
     def get_strain(self, state: RobotState) -> np.ndarray:

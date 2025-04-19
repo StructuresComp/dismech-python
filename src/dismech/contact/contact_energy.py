@@ -32,11 +32,7 @@ class ContactEnergy(metaclass=abc.ABCMeta):
     def grad_hess_energy(self, state):
         Delta = self.get_Delta(state)
         grad_Delta, hess_Delta = self.get_grad_hess_Delta(state)
-
-        # Batching issue
-        grad_Delta = grad_Delta
-        hess_Delta = hess_Delta
-
+        
         grad_E_D = self.__grad_fn(Delta)
         hess_E_D = self.__hess_fn(Delta)  # shape (N,)
 

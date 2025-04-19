@@ -22,6 +22,7 @@ MIDEDGE = 'triangle'
 BEND = 'bend'
 TWIST = 'twist'
 
+
 class TimeStepper(metaclass=abc.ABCMeta):
 
     def __init__(self, robot: SoftRobot, min_force=1e-8, dtype=np.float64):
@@ -29,17 +30,22 @@ class TimeStepper(metaclass=abc.ABCMeta):
         self._min_force = min_force
 
         # Initialize elastics
-        self.elastic_energies: typing.List[ElasticEnergy] = {}
+        self.elastic_energies: typing.Dict[str, ElasticEnergy] = {}
         if robot.stretch_springs:
-            self.elastic_energies[STRETCH] = StretchEnergy(robot.stretch_springs, robot.state)
+            self.elastic_energies[STRETCH] = StretchEnergy(
+                robot.stretch_springs, robot.state)
         if robot.hinge_springs:
-            self.elastic_energies[HINGE] = HingeEnergy(robot.hinge_springs, robot.state)
+            self.elastic_energies[HINGE] = HingeEnergy(
+                robot.hinge_springs, robot.state)
         if robot.triangle_springs:
-            self.elastic_energies[MIDEDGE] = TriangleEnergy(robot.triangle_springs, robot.state)
+            self.elastic_energies[MIDEDGE] = TriangleEnergy(
+                robot.triangle_springs, robot.state)
         if robot.bend_twist_springs:
-            self.elastic_energies[BEND] = BendEnergy(robot.bend_twist_springs, robot.state)
+            self.elastic_energies[BEND] = BendEnergy(
+                robot.bend_twist_springs, robot.state)
             if not robot.sim_params.two_d_sim:   # if 3d
-                self.elastic_energies[TWIST] = TwistEnergy(robot.bend_twist_springs, robot.state)
+                self.elastic_energies[TWIST] = TwistEnergy(
+                    robot.bend_twist_springs, robot.state)
 
         # Set solver
         # TODO: figure out how to pass parameters
@@ -80,63 +86,55 @@ class TimeStepper(metaclass=abc.ABCMeta):
         solved = False
 
         # Preallocate matrices
-        self._n_dof = robot.state.q.shape[0]
-        n_free_dof = robot.state.free_dof.shape[0]
-
-        self._forces = np.empty(self._n_dof)
-        self._f_free = np.empty(n_free_dof)
-        self._dq_free = np.empty(n_free_dof)
-
-        if not robot.sim_params.sparse:
-            self._jacobian = np.empty((self._n_dof, self._n_dof))
-            self._j_free = np.empty((n_free_dof, n_free_dof))
-
-        ndof_diag = np.arange(robot.state.q.shape[0])
+        ndof_diag = np.arange(q.shape[0])
 
         while not solved:
             # Some integrators compute F and J not at q_{n+1} (midpoint)
             q_eval = self._compute_evaluation_position(robot, q)
             u_eval = self._compute_evaluation_velocity(robot, q)
 
-            self._compute_forces_and_jacobian(robot, q_eval, u_eval)
+            F, J = self._compute_forces_and_jacobian(robot, q_eval, u_eval)
 
             # Inertial force vs equilibrium
             if not robot.sim_params.static_sim:
                 inertial_force, inertial_jacobian = self._compute_inertial_force_and_jacobian(
                     robot, q)
-                self._forces += inertial_force
+                F += inertial_force
 
                 if robot.sim_params.sparse:
-                    self._jacobian += sp.diags(inertial_jacobian, format='csr')
+                    J += sp.diags(inertial_jacobian, format='csr')
                 else:
-                    self._jacobian[ndof_diag, ndof_diag] += inertial_jacobian
+                    J[ndof_diag, ndof_diag] += inertial_jacobian
 
             # Handle free DOF components
-            self._f_free[:] = self._forces[robot.state.free_dof]
+            f_free = F[robot.state.free_dof]
             if robot.sim_params.sparse:
-                self._j_free = self._jacobian[robot.state.free_dof,
-                                              :][:, robot.state.free_dof]
+                j_free = J[robot.state.free_dof,
+                           :][:, robot.state.free_dof]
             else:
-                self._j_free[:] = self._jacobian[np.ix_(
+                j_free = J[np.ix_(
                     robot.state.free_dof, robot.state.free_dof)]
 
             # Linear system solver
-            if np.linalg.norm(self._f_free) < self._min_force:
-                self._dq_free.fill(0.0)
+            if np.linalg.norm(f_free) < self._min_force:
+                dq_free = np.zeros_like(f_free)
             else:
-                self._dq_free[:] = self._solver.solve(
-                    self._j_free, self._f_free)
+                dq_free = self._solver.solve(j_free, f_free)
 
             # Adaptive damping and update
-            self._dq_free *= self._adaptive_damping(alpha, iteration)
-            q[robot.state.free_dof] -= self._dq_free
+            if robot.sim_params.use_line_search:
+                alpha = self._line_search(robot, q, dq_free, f_free, j_free)
+            else:
+                alpha = self._adaptive_damping(alpha, iteration)
+            dq_free *= alpha
+            q[robot.state.free_dof] -= dq_free
 
             # Error and convergence
-            err = np.linalg.norm(self._f_free)
+            err = np.linalg.norm(f_free)
             err_history.append(err)
 
             solved = self._converged(
-                err, err_history, self._dq_free, iteration, robot)
+                err, err_history, dq_free, iteration, robot)
 
             if debug:
                 print("iter: {}, error: {:.3f}".format(iteration, err))
@@ -162,7 +160,7 @@ class TimeStepper(metaclass=abc.ABCMeta):
 
     def compute_total_elastic_energy(self, state: RobotState) -> np.ndarray:
         total = 0.0
-        for energy in self.elastic_energies:
+        for energy in self.elastic_energies.values():
             total += energy.get_energy_linear_elastic(state)
         return total
 
@@ -173,14 +171,14 @@ class TimeStepper(metaclass=abc.ABCMeta):
         return (q - robot.state.q) / robot.sim_params.dt
 
     def _compute_forces_and_jacobian(self, robot: SoftRobot, q, u):
-        """ Sets self._forces and self._jacobian to sum of external/internal forces """
-        self._forces.fill(0.0)
+        """ Computes forces and jacobian as sum of external and internal forces. """
+        forces = np.zeros(q.shape[0])
 
         if robot.sim_params.sparse:
-            self._jacobian = sp.csr_matrix(
-                (self._n_dof, self._n_dof), dtype=np.float64)
+            jacobian = sp.csr_matrix(
+                (q.shape[0], q.shape[0]), dtype=np.float64)
         else:
-            self._jacobian.fill(0.0)
+            jacobian = np.zeros((q.shape[0], q.shape[0]))
 
         # Compute reference frames and material directors
         a1_iter, a2_iter = robot.compute_time_parallel(
@@ -195,26 +193,21 @@ class TimeStepper(metaclass=abc.ABCMeta):
 
         # Add elastic forces
         for energy in self.elastic_energies.values():
-            # J is now scipy crc sparse
             F, J = energy.grad_hess_energy_linear_elastic(
                 new_state, robot.sim_params.sparse)
-            self._forces -= F
-            self._jacobian -= J
-
-            # FDM check
-            #_,_, fdm_check_grad, fdm_check_hess = energy.fdm_check_grad_hess_strain(new_state)
-            #print("gradient of strain passed FDM check:", fdm_check_grad)
-            #print("hessian of strain passed FDM check:", fdm_check_hess)
+            forces -= F
+            jacobian -= J
 
         # Add external forces
         # TODO: Make this also a list
         if "gravity" in robot.env.ext_force_list:
-            self._forces -= compute_gravity_forces(robot)
+            forces -= compute_gravity_forces(robot)
         # ignore for now
         if "aerodynamics" in robot.env.ext_force_list:
             F, J, = compute_aerodynamic_forces_vectorized(robot, q, u)
-            self._forces -= F
-            self._jacobian -= J  # FIXME: Sparse option
+            forces -= F
+            jacobian -= J  # FIXME: Sparse option
+        return forces, jacobian
 
     def _converged(self,
                    err: float,
@@ -236,6 +229,36 @@ class TimeStepper(metaclass=abc.ABCMeta):
             return 1.0
 
         return max(alpha * 0.9, 0.1)
+
+    def _line_search(self, robot, q, dq, F, J, m1=0.1, m2=0.9, alpha_low=0.0, alpha_high=1.0, max_iter=10):
+        d0 = np.dot(F, J @ dq)
+        alpha = alpha_high
+        iteration = 0
+        while iteration < max_iter:
+            # Construct full dq matrix
+            dq_full = np.zeros_like(q)
+            dq_full[robot.state.free_dof] = dq
+            q_new = q - alpha * dq_full
+
+            # Evaluate at same point as outer step
+            q_eval = self._compute_evaluation_position(robot, q_new)
+            u_eval = self._compute_evaluation_velocity(robot, q_new)
+            F_new, _ = self._compute_forces_and_jacobian(robot, q_eval, u_eval)
+
+            lhs = 0.5 * np.linalg.norm(F_new) ** 2 - \
+                0.5 * np.linalg.norm(F) ** 2
+            rhs_low = alpha * m2 * d0
+            rhs_high = alpha * m1 * d0
+
+            if rhs_low <= lhs <= rhs_high:
+                return alpha
+            elif lhs < rhs_low:
+                alpha_low = alpha
+            else:
+                alpha_high = alpha
+            alpha = 0.5 * (alpha_low + alpha_high)
+            iteration += 1
+        return alpha
 
     def _finalize_update(self, robot: SoftRobot, q):
         u = self._compute_velocity(robot, q)

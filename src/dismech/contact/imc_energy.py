@@ -9,8 +9,7 @@ class IMCEnergy(ContactEnergy):
     def __init__(self, ind: np.ndarray, delta: float, h: float, k_1: float = None):
         if k_1 is None:
             k_1 = 15 / delta
-        super().__init__(delta, h, k_1)
-        self.ind = ind
+        super().__init__(ind, delta, h, k_1)
         self.__pp_fn, self.__grad_pp_fn, self.__hess_pp_fn = get_lambda_fns(
             delta_p_to_p)
         self.__pe_fn, self.__grad_pe_fn, self.__hess_pe_fn = get_lambda_fns(

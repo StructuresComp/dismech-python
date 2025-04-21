@@ -6,11 +6,12 @@ import numpy as np
 
 from .state import RobotState
 from .stiffness import compute_rod_stiffness, compute_shell_stiffness
-from .frame_util import compute_reference_twist, compute_tfc_midedge, parallel_transport
+from .frame_util import compute_reference_twist, compute_tfc_midedge, parallel_transport, construct_edge_combinations
 from .environment import Environment
 from .geometry import Geometry
 from .params import GeomParams, Material, SimParams
 from .springs import BendTwistSpring, StretchSprings, HingeSprings, TriangleSpring
+from .contact import ContactPair
 
 
 _TANGENT_THRESHOLD = 1e-10
@@ -31,10 +32,12 @@ class SoftRobot:
         self._init_springs(geo)
         self.__mass_matrix = self._get_mass_matrix(geom, material)
 
-        # self.__edge_combos = self._construct_edge_combinations(
-        #    np.concatenate((geo.rod_edges, geo.rod_shell_joint_edges)
-        #                   ) if geo.rod_shell_joint_edges.size else geo.rod_edges
-        # )
+        # Contact
+        self.__edge_combos = construct_edge_combinations(
+           np.concatenate((geo.rod_edges, geo.rod_shell_joint_edges)
+                          ) if geo.rod_shell_joint_edges.size else geo.rod_edges
+        )
+        self.__contact_pairs = [ContactPair(e, self.map_node_to_dof) for e in self.__edge_combos]
 
     def _init_geometry(self, geo: Geometry):
         """Initialize geometry properties"""
@@ -515,6 +518,10 @@ class SoftRobot:
     def triangle_springs(self) -> typing.List[TriangleSpring]:
         """List of triangle spring elements"""
         return self.__triangle_springs
+    
+    @property
+    def contact_pairs(self):
+        return self.__contact_pairs
 
     # Visualization properties
 

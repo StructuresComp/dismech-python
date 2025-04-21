@@ -18,7 +18,8 @@ class Environment:
             self.pt_force_node = kwargs['pt_force_node']
         # TODO: Translate the following forces
         elif key == 'selfContact':
-            pass
+            self.delta = kwargs['delta']
+            self.h = kwargs['h']
         elif key == 'selfFriction':
             pass
         elif key == 'floorContact':

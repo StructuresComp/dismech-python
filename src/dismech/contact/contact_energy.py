@@ -15,7 +15,8 @@ def get_E(Delta, delta, h, k_1):
 
 class ContactEnergy(metaclass=abc.ABCMeta):
 
-    def __init__(self, delta: float, h: float, k_1: float):
+    def __init__(self, ind, delta: float, h: float, k_1: float):
+        self.ind = ind
         Delta = sp.symbols("Delta")
         self.__expr = get_E(Delta, delta, h, k_1)
         self.__fn = sp.lambdify(Delta, self.__expr, modules='numpy')
@@ -42,7 +43,15 @@ class ContactEnergy(metaclass=abc.ABCMeta):
             np.einsum('ni,nj->nij', grad_Delta, grad_Delta)
         hess_E += grad_E_D[:, None, None] * hess_Delta
 
-        return grad_E, hess_E
+        n_dof = state.shape[0]
+
+        Fs = np.zeros(n_dof)
+        np.add.at(Fs, self.ind, -grad_E)
+        Js = np.zeros((n_dof, n_dof))
+        np.add.at(Js, (self.ind[:, :, None],
+                        self.ind[:, None, :]), -hess_E)
+        
+        return Fs, Js
 
     @abc.abstractmethod
     def get_Delta(self, state):

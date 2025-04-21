@@ -11,6 +11,7 @@ from ..elastics import ElasticEnergy, StretchEnergy, HingeEnergy, BendEnergy, Tr
 from ..external_forces import compute_gravity_forces, compute_aerodynamic_forces_vectorized
 from ..solvers import Solver, NumpySolver, PardisoSolver
 from ..visualizer import Visualizer
+from ..contact import IMCEnergy
 
 _SOLVERS: typing.Dict[str, Solver] = {
     'np': NumpySolver, 'pardiso': PardisoSolver}
@@ -46,6 +47,9 @@ class TimeStepper(metaclass=abc.ABCMeta):
             if not robot.sim_params.two_d_sim:   # if 3d
                 self.elastic_energies[TWIST] = TwistEnergy(
                     robot.bend_twist_springs, robot.state)
+                
+        if "selfContact" in robot.env.ext_force_list:
+            self._contact_energy = IMCEnergy(np.vstack([p.ind for p in robot.contact_pairs]), robot.env.delta, robot.env.h)
 
         # Set solver
         # TODO: figure out how to pass parameters
@@ -207,6 +211,10 @@ class TimeStepper(metaclass=abc.ABCMeta):
             F, J, = compute_aerodynamic_forces_vectorized(robot, q, u)
             forces -= F
             jacobian -= J  # FIXME: Sparse option
+        if "selfContact" in robot.env.ext_force_list:
+            F, J = self._contact_energy.grad_hess_energy(q)
+            forces -= F
+            jacobian -= J
         return forces, jacobian
 
     def _converged(self,

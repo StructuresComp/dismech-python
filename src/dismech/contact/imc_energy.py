@@ -9,6 +9,8 @@ class IMCEnergy(ContactEnergy):
     def __init__(self, ind: np.ndarray, delta: float, h: float, k_1: float = None):
         if k_1 is None:
             k_1 = 15 / delta
+        print(delta, h, k_1)
+        self._org_ind = ind
         super().__init__(ind, delta, h, k_1)
         self.__pp_fn, self.__grad_pp_fn, self.__hess_pp_fn = get_lambda_fns(
             delta_p_to_p)
@@ -17,33 +19,35 @@ class IMCEnergy(ContactEnergy):
         self.__ee_fn, self.__grad_ee_fn, self.__hess_ee_fn = get_lambda_fns(
             delta_e_to_e)
 
-    def get_Delta(self, state):
-        t, u = self.get_lumelsky_coeff(state)
-        reordered_ind = self._get_lumelsky_mask(t, u)
-        return self._evalulate_piecewise(state,
-                                         reordered_ind,
+    def get_Delta(self, q):
+        t, u = self.get_lumelsky_coeff(q)
+        self.ind = self._get_lumelsky_mask(t, u)
+        return self._evalulate_piecewise(q * self.scale,
                                          t, u,
                                          self.__pp_fn,
                                          self.__pe_fn,
                                          self.__ee_fn,
                                          ())
 
-    def get_grad_hess_Delta(self, state):
+    def get_grad_hess_Delta(self, state, scale: bool = True):
+        state = state * self.scale
         t, u = self.get_lumelsky_coeff(state)
-        reordered_ind = self._get_lumelsky_mask(t, u)
-        return self._evalulate_piecewise(state,
-                                         reordered_ind,
+        self.ind = self._get_lumelsky_mask(t, u)
+        grad_Delta = self._evalulate_piecewise(state,
                                          t, u,
                                          self.__grad_pp_fn,
                                          self.__grad_pe_fn,
-                                         self.__grad_ee_fn), \
-            self._evalulate_piecewise(state,
-                                      reordered_ind,
+                                         self.__grad_ee_fn)
+        hess_Delta = self._evalulate_piecewise(state,
                                       t, u,
                                       self.__hess_pp_fn,
                                       self.__hess_pe_fn,
                                       self.__hess_ee_fn,
                                       (12, 12,))
+        if scale:
+            return grad_Delta * self.scale, hess_Delta * self.scale ** 2
+        return grad_Delta, hess_Delta
+            
 
     def get_lumelsky_coeff(self, q):
         x, y, a, b = q[self.ind].reshape(-1, 4, 3).transpose(1, 0, 2)
@@ -113,9 +117,9 @@ class IMCEnergy(ContactEnergy):
 
         # Apply the selected permutation mask to each row
         reorder_masks = mask_choices[mask_idx]
-        return np.take_along_axis(self.ind, reorder_masks, axis=1)
+        return np.take_along_axis(self._org_ind, reorder_masks, axis=1)
 
-    def _evalulate_piecewise(self, q, reordered_ind, t, u, fn_p2p, fn_p2e, fn_e2e, shape=(12,)):
+    def _evalulate_piecewise(self, q, t, u, fn_p2p, fn_p2e, fn_e2e, shape=(12,)):
         """
         Dispatches batched piecewise computations based on contact type.
 
@@ -129,7 +133,7 @@ class IMCEnergy(ContactEnergy):
         Returns:
             (N, ...) result with same order as input
         """
-        N = reordered_ind.shape[0]
+        N = self.ind.shape[0]
         # or shape depending on function output
         result = np.zeros((N,) + shape)
 
@@ -143,7 +147,7 @@ class IMCEnergy(ContactEnergy):
 
         # Helper to extract input arrays from q
         def get_inputs(mask):
-            idx = reordered_ind[mask]
+            idx = self.ind[mask]
             inputs = q[idx]
             return [inputs[:, i] for i in range(inputs.shape[1])]
 

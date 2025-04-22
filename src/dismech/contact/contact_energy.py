@@ -15,10 +15,19 @@ def get_E(Delta, delta, h, k_1):
 
 class ContactEnergy(metaclass=abc.ABCMeta):
 
-    def __init__(self, ind, delta: float, h: float, k_1: float):
+    def __init__(self, ind, delta: float, h: float, k_1: float, scale: bool = True):
         self.ind = ind
+        if scale:
+            self.scale = 1.0 / h
+        else:
+            self.scale = 1.0
+
         Delta = sp.symbols("Delta")
-        self.__expr = get_E(Delta, delta, h, k_1)
+        norm_delta = delta * self.scale
+        norm_k_1 = k_1 / self.scale
+        norm_h = h * self.scale
+        self.__expr = get_E(Delta, norm_delta, norm_h, norm_k_1)
+
         self.__fn = sp.lambdify(Delta, self.__expr, modules='numpy')
         self.__grad_fn = sp.lambdify(Delta, sp.diff(
             self.__expr, Delta), modules='numpy')
@@ -32,8 +41,8 @@ class ContactEnergy(metaclass=abc.ABCMeta):
 
     def grad_hess_energy(self, state):
         Delta = self.get_Delta(state)
-        grad_Delta, hess_Delta = self.get_grad_hess_Delta(state)
-        
+        grad_Delta, hess_Delta = self.get_grad_hess_Delta(state, False)
+
         grad_E_D = self.__grad_fn(Delta)
         hess_E_D = self.__hess_fn(Delta)  # shape (N,)
 
@@ -43,13 +52,17 @@ class ContactEnergy(metaclass=abc.ABCMeta):
             np.einsum('ni,nj->nij', grad_Delta, grad_Delta)
         hess_E += grad_E_D[:, None, None] * hess_Delta
 
+        # Scale
+        grad_E *= self.scale
+        hess_E *= self.scale ** 2
+
         n_dof = state.shape[0]
 
         Fs = np.zeros(n_dof)
         np.add.at(Fs, self.ind, -grad_E)
         Js = np.zeros((n_dof, n_dof))
         np.add.at(Js, (self.ind[:, :, None],
-                        self.ind[:, None, :]), -hess_E)
+                       self.ind[:, None, :]), -hess_E)
         
         return Fs, Js
 
@@ -58,5 +71,5 @@ class ContactEnergy(metaclass=abc.ABCMeta):
         pass
 
     @abc.abstractmethod
-    def get_grad_hess_Delta(self, state):
+    def get_grad_hess_Delta(self, state, scale):
         pass

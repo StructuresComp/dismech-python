@@ -49,7 +49,7 @@ class TimeStepper(metaclass=abc.ABCMeta):
                     robot.bend_twist_springs, robot.state)
                 
         if "selfContact" in robot.env.ext_force_list:
-            self._contact_energy = IMCEnergy(np.vstack([p.ind for p in robot.contact_pairs]), robot.env.delta, robot.env.h)
+            self._contact_energy = IMCEnergy(robot.contact_pairs, robot.env.delta, robot.env.h)
 
         # Set solver
         # TODO: figure out how to pass parameters

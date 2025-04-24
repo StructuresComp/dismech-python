@@ -56,10 +56,10 @@ def get_lambda_fns(expr_fn, vars=sp.symbols('x0 x1 x2 y0 y1 y2 a0 a1 a2 b0 b1 b2
             return np.stack(ret)
         return batched
 
-    fn = sp.lambdify(vars, expr, modules='numpy')
+    fn = sp.lambdify(vars, expr, modules='numpy', cse=True, docstring_limit=0)
     grad_fn = batchify(sp.lambdify(
-        vars, derive_by_array(expr, vars), modules='numpy'))
+        vars, derive_by_array(expr, vars), modules='numpy', cse=True, docstring_limit=0))
     hess_fn = batchify(sp.lambdify(vars, derive_by_array(
-        derive_by_array(expr, vars), vars), modules='numpy'))
+        derive_by_array(expr, vars), vars), modules='numpy', cse=True, docstring_limit=0))
 
     return fn, grad_fn, hess_fn

@@ -1,7 +1,10 @@
 import abc
+from typing import List
 
 import numpy as np
 import sympy as sp
+
+from .contact_pairs import ContactPair
 
 
 def get_E(Delta, delta, h, k_1):
@@ -15,8 +18,8 @@ def get_E(Delta, delta, h, k_1):
 
 class ContactEnergy(metaclass=abc.ABCMeta):
 
-    def __init__(self, ind, delta: float, h: float, k_1: float, scale: bool = True):
-        self.ind = ind
+    def __init__(self, pairs: List[ContactPair], delta: float, h: float, k_1: float, scale: bool = True):
+        self.ind = np.vstack([p.ind for p in pairs])
         if scale:
             self.scale = 1.0 / h
         else:
@@ -34,14 +37,15 @@ class ContactEnergy(metaclass=abc.ABCMeta):
         self.__hess_fn = sp.lambdify(Delta, sp.diff(
             self.__expr, Delta, Delta), modules='numpy')
 
-    def get_energy(self, state, output_scalar: bool = True):
-        Delta = self.get_Delta(state)
+    def get_energy(self, q, output_scalar: bool = True):
+        Delta = self.get_Delta(q)
         energy = self.__fn(Delta)
         return np.sum(energy) if output_scalar else energy
 
-    def grad_hess_energy(self, state):
-        Delta = self.get_Delta(state)
-        grad_Delta, hess_Delta = self.get_grad_hess_Delta(state, False)
+    def grad_hess_energy(self, q):
+        q = q * self.scale
+        Delta = self.get_Delta(q)
+        grad_Delta, hess_Delta = self.get_grad_hess_Delta(q)
 
         grad_E_D = self.__grad_fn(Delta)
         hess_E_D = self.__hess_fn(Delta)  # shape (N,)
@@ -56,20 +60,20 @@ class ContactEnergy(metaclass=abc.ABCMeta):
         grad_E *= self.scale
         hess_E *= self.scale ** 2
 
-        n_dof = state.shape[0]
+        n_dof = q.shape[0]
 
         Fs = np.zeros(n_dof)
         np.add.at(Fs, self.ind, -grad_E)
         Js = np.zeros((n_dof, n_dof))
         np.add.at(Js, (self.ind[:, :, None],
                        self.ind[:, None, :]), -hess_E)
-        
+
         return Fs, Js
 
     @abc.abstractmethod
-    def get_Delta(self, state):
+    def get_Delta(self, q):
         pass
 
     @abc.abstractmethod
-    def get_grad_hess_Delta(self, state, scale):
+    def get_grad_hess_Delta(self, q):
         pass

@@ -58,15 +58,26 @@ class IMCEnergy(ContactEnergy):
         S2 = np.sum(ej * eij, axis=1)
 
         den = D1 * D2 - R ** 2
-        t = np.divide((S1 * D2 - S2 * R), den, where=den != 0)
-        t = np.clip(t, 0, 1.0)
+        epsilon = 1e-12  # Threshold for detecting parallelism
+        is_parallel = np.abs(den) < epsilon
 
+        # Regular case
+        t = np.divide((S1 * D2 - S2 * R), den, where=~is_parallel)
+        t = np.clip(t, 0, 1.0)
         u = (t * R - S2) / D2
         uf = np.clip(u, 0, 1.0)
-
         t = np.where(uf != u, (uf * R + S1) / D1, t)
+        t = np.clip(t, 0, 1.0)
 
-        return np.clip(t, 0, 1.0), uf
+        # Parallel case: force midpoint projection
+        #t_mid = 0.5 * np.ones_like(t)
+        #u_mid = 0.5 * np.ones_like(uf)
+
+        # Use midpoints where parallel
+        #t = np.where(is_parallel, t_mid, t)
+        #uf = np.where(is_parallel, u_mid, uf)
+
+        return t, uf
 
     def _get_lumelsky_mask(self, t, u):
         # Define reordering patterns

@@ -23,9 +23,12 @@ class Environment:
         elif key == 'selfFriction':
             pass
         elif key == 'floorContact':
-            pass
+            self.ground_z = kwargs['ground_z']
+            self.ground_stiffness = kwargs['stiffness']
+            self.ground_delta = kwargs['delta']
+            self.ground_h = kwargs['h']
         elif key == 'floorFriction':
-            pass
+            self.mu = kwargs['mu']
         else:
             raise KeyError
         

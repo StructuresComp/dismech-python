@@ -8,7 +8,7 @@ import numpy as np
 from ..soft_robot import SoftRobot
 from ..state import RobotState
 from ..elastics import ElasticEnergy, StretchEnergy, HingeEnergy, BendEnergy, TriangleEnergy, TwistEnergy
-from ..external_forces import compute_gravity_forces, compute_aerodynamic_forces_vectorized
+from ..external_forces import compute_gravity_forces, compute_aerodynamic_forces_vectorized, compute_ground_contact
 from ..solvers import Solver, NumpySolver, PardisoSolver
 from ..visualizer import Visualizer
 from ..contact import IMCEnergy
@@ -201,7 +201,6 @@ class TimeStepper(metaclass=abc.ABCMeta):
                 new_state, robot.sim_params.sparse)
             forces -= F
             jacobian -= J
-
         # Add external forces
         # TODO: Make this also a list
         if "gravity" in robot.env.ext_force_list:
@@ -213,6 +212,10 @@ class TimeStepper(metaclass=abc.ABCMeta):
             jacobian -= J  # FIXME: Sparse option
         if "selfContact" in robot.env.ext_force_list:
             F, J = self._contact_energy.grad_hess_energy(q)
+            forces -= F
+            jacobian -= J
+        if "floorContact" in robot.env.ext_force_list:
+            F, J = compute_ground_contact(robot, q)
             forces -= F
             jacobian -= J
         return forces, jacobian

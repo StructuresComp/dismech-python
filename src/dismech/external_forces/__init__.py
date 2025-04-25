@@ -1,3 +1,3 @@
 from .aerodynamics import compute_aerodynamic_forces, compute_aerodynamic_forces_vectorized
 from .gravity import compute_gravity_forces
-from .ground_contact import compute_ground_contact
+from .ground_contact import compute_ground_contact, compute_ground_contact_friction

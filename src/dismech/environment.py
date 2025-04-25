@@ -28,7 +28,8 @@ class Environment:
             self.ground_delta = kwargs['delta']
             self.ground_h = kwargs['h']
         elif key == 'floorFriction':
-            self.mu = kwargs['mu']
+            self.ground_mu = kwargs['mu']
+            self.ground_vel_tol = kwargs['vel_tol']
         else:
             raise KeyError
         

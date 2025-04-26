@@ -45,7 +45,7 @@ def compute_ground_contact(robot: SoftRobot, q: np.ndarray, as_raw=False) -> typ
     return F, J
 
 
-def compute_ground_contact_friction(robot: SoftRobot, q: np.ndarray, u: np.ndarray, eps=1e-12) -> typing.Tuple[np.ndarray, np.ndarray]:
+def compute_ground_contact_friction(robot: SoftRobot, q: np.ndarray, u: np.ndarray, eps=1e-4) -> typing.Tuple[np.ndarray, np.ndarray]:
     F, J = compute_ground_contact(robot, q, as_raw=True)
 
     if not F.any():

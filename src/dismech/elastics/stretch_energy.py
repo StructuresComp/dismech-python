@@ -1,12 +1,12 @@
 import typing
 import numpy as np
 
-from .elastic_energyv2 import ElasticEnergy2
+from .elastic_energy import ElasticEnergy
 from ..state import RobotState
 from ..springs import StretchSprings
 
 
-class StretchEnergy(ElasticEnergy2):
+class StretchEnergy(ElasticEnergy):
     def __init__(self, springs: StretchSprings, initial_state: RobotState):
         super().__init__(springs, initial_state)
         self.inv_l_k = 1.0 / self._springs.ref_len

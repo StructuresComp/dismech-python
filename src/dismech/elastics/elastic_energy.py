@@ -2,10 +2,9 @@ import numpy as np
 import scipy.sparse as sp
 import abc
 import typing
-import dataclasses
-import matplotlib.pyplot as plt
 
 from ..soft_robot import SoftRobot
+from ..springs import Springs
 from ..state import RobotState
 
 
@@ -19,103 +18,90 @@ class PostInitABCMeta(abc.ABCMeta):
 
 class ElasticEnergy(metaclass=PostInitABCMeta):
     """
-    Abstract elastic energy class. Objects of this class can be used to calculate the energy of a list of springs.
+    Abstract elastic energy class.
     """
 
-    def __init__(self, 
-                 K: np.ndarray,
-                 nodes_ind: np.ndarray,
-                 ind: np.ndarray,
-                 initial_state: RobotState):
-        # self._K (N,C)
-        self._n_K = 1 if K.ndim == 1 else K.shape[1]
-        self._K = K.reshape(-1, self._n_K)
+    def __init__(self, springs: Springs, initial_state: RobotState):
+        """
+        Args:
+            springs (Springs): Springs object containing fixed indices and mutable nat_strain and inc_strain.
+            initial_state (RobotState): State associated with nat_strain.
+        """
+        self._springs = springs
+        self._n_K = 1 if self.K.ndim == 1 else self.K.shape[1]
 
         # Get vectorized node indices
-        self._node_dof_ind = SoftRobot.map_node_to_dof(nodes_ind.flatten('F'))
-        self._n_nodes = nodes_ind.shape[1]
+        self._node_dof_ind = SoftRobot.map_node_to_dof(
+            springs.nodes_ind.flatten('F'))
+        self._n_nodes = springs.nodes_ind.shape[1]
 
+        # for __post_init__
         self._initial_state = initial_state
-        self._ind = ind
 
         # sparse index creation
-        stencil_n_dof = self._ind.shape[1]
-        self._rows = np.repeat(self._ind, stencil_n_dof, axis=1).ravel()
-        self._cols = np.tile(self._ind, (1, stencil_n_dof)).ravel()
+        stencil_n_dof = self._springs.ind.shape[1]
+        self._rows = np.repeat(
+            self._springs.ind, stencil_n_dof, axis=1).ravel()
+        self._cols = np.tile(self._springs.ind, (1, stencil_n_dof)).ravel()
 
     def __post_init__(self):
-        self._nat_strain = self.get_strain(self._initial_state).copy()
+        # If nat_strain was not set by the user, set it to initial state strain
+        nat_strain = self.get_strain(self._initial_state)
+        self._springs.nat_strain = np.where(
+            np.isnan(self._springs.nat_strain),
+            nat_strain,
+            self._springs.nat_strain
+        )
+
+    @property
+    @abc.abstractmethod
+    def K(self) -> np.ndarray:
+        pass
 
     def _get_node_pos(self, q: np.ndarray):
         """Return a M x N x 3 matrix """
         return q[self._node_dof_ind].reshape(self._n_nodes, -1, 3)
 
-    def _get_del_strain(self, strain, inc_strain: np.ndarray = None, use_nat_strain: bool = True):
-        """Get strain difference."""
-        base_strain = np.zeros_like(strain)
-        if use_nat_strain:
-            base_strain -= self._nat_strain
-        if inc_strain is not None and base_strain.shape == inc_strain.shape:
-            base_strain -= inc_strain
+    def _get_del_strain(self, state: RobotState) -> np.ndarray:
+        base = self._springs.nat_strain + self._springs.inc_strain
+        return (self.get_strain(state) - base).reshape(-1, self._n_K)
 
-        return (strain - base_strain).reshape(-1, self._n_K)
-    
-    def get_energy_linear_elastic(self,
-                                  state: RobotState,
-                                  output_scalar: bool = True,
-                                  inc_strain: np.ndarray = None,
-                                  use_nat_strain: bool = True):
-        strain = self.get_strain(state)
-        del_strain = self._get_del_strain(strain, inc_strain, use_nat_strain)
+    def get_energy_linear_elastic(self, state: RobotState, output_scalar: bool = True):
+        del_strain = self._get_del_strain(state)
+        energy = 0.5 * self.K.reshape(-1, self._n_K) * del_strain**2
+        return np.sum(energy) if output_scalar else energy
 
-        if output_scalar:
-            return 0.5 * np.sum(self._K * del_strain**2)
-        return 0.5 * self._K * del_strain**2
-
-    def grad_hess_energy_linear_elastic(self,
-                                        state: RobotState,
-                                        sparse: bool = False,
-                                        inc_strain: np.ndarray = None,
-                                        use_nat_strain: bool = True) -> typing.Tuple[np.ndarray, np.ndarray] | typing.Tuple[np.ndarray, sp.csr_array]:
-        strain = self.get_strain(state)
+    def grad_hess_energy_linear_elastic(self, state: RobotState, sparse: bool = False) -> typing.Tuple[np.ndarray, np.ndarray] | typing.Tuple[np.ndarray, sp.csr_array]:
+        del_strain = self._get_del_strain(state)
         grad_strain, hess_strain = self.grad_hess_strain(state)
 
-        del_strain = self._get_del_strain(strain, inc_strain, use_nat_strain)
-        gradE_strain = self._K * del_strain
+        K = self.K.reshape(-1, self._n_K)
+        gradE_strain = K * del_strain
 
-        # Reshape to handle multiple strain components (EI1, EI2)
-        gradE_strain = gradE_strain.reshape(gradE_strain.shape[0], self._n_K)
-        grad_strain = grad_strain.reshape(
-            grad_strain.shape[0], grad_strain.shape[1], self._n_K)
+        # Ensure correct shape
+        gradE_strain = gradE_strain.reshape(-1, self._n_K)
+        grad_strain = grad_strain.reshape(-1, grad_strain.shape[1], self._n_K)
         hess_strain = hess_strain.reshape(
-            hess_strain.shape[0], hess_strain.shape[1], hess_strain.shape[2], self._n_K)
+            -1, hess_strain.shape[1], hess_strain.shape[2], self._n_K)
 
-        # Gradient
         grad_energy = np.sum(gradE_strain[:, None, :] * grad_strain, axis=-1)
-
-        # Term 1: gradE_strain * hess_strain summed over components
         hess_term1 = np.sum(
             gradE_strain[:, None, None, :] * hess_strain, axis=-1)
-
-        # Term 2: K * (grad_strain ⊗ grad_strain) summed over components
-        outer = np.einsum('nmc,nkc->nmkc', grad_strain, grad_strain)
         hess_term2 = np.einsum(
-            'nc,nmkc->nmk', self._K, outer)
+            'nc,nmkc->nmk', K, np.einsum('nmc,nkc->nmkc', grad_strain, grad_strain))
 
         hess_energy = hess_term1 + hess_term2
 
-        # Correct signs
-        if (sign_grad := getattr(self, '_sign_grad', None)) is not None:
-            grad_energy *= sign_grad
-
-        if (sign_hess := getattr(self, '_sign_hess', None)) is not None:
-            hess_energy *= sign_hess
+        # Sign correction
+        if hasattr(self, '_sign_grad'):
+            grad_energy *= self._sign_grad
+        if hasattr(self, '_sign_hess'):
+            hess_energy *= self._sign_hess
 
         n_dof = state.q.shape[0]
 
-        # Force always dense
         Fs = np.zeros(n_dof)
-        np.add.at(Fs, self._ind, -grad_energy)
+        np.add.at(Fs, self._springs.ind, -grad_energy)
 
         if sparse:
             Js = sp.coo_matrix((-hess_energy.ravel(),
@@ -123,9 +109,8 @@ class ElasticEnergy(metaclass=PostInitABCMeta):
                                shape=(n_dof, n_dof)).tocsr()
         else:
             Js = np.zeros((n_dof, n_dof))
-            np.add.at(Js, (self._ind[:, :, None],
-                           self._ind[:, None, :]), -hess_energy)
-
+            np.add.at(Js, (self._springs.ind[:, :, None],
+                           self._springs.ind[:, None, :]), -hess_energy)
         return Fs, Js
 
     @abc.abstractmethod

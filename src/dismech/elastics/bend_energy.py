@@ -1,19 +1,14 @@
 import numpy as np
 import typing
 
-from ..springs import BendTwistSpring
+from ..springs import BendSprings
 from ..state import RobotState
 from .elastic_energy import ElasticEnergy
 
 
 class BendEnergy(ElasticEnergy):
-    def __init__(self, springs: typing.List[BendTwistSpring], initial_state: RobotState):
-        super().__init__(
-            np.array([s.stiff_EI / s.voronoi_len for s in springs]),
-            np.array([s.nodes_ind for s in springs]),
-            np.array([s.ind for s in springs]),
-            initial_state,
-        )
+    def __init__(self, springs: BendSprings, initial_state: RobotState):
+        super().__init__(springs, initial_state)
         self._sgn = np.array([s.sgn for s in springs])
         self._edges_ind = np.array([s.edges_ind for s in springs])
 
@@ -26,6 +21,10 @@ class BendEnergy(ElasticEnergy):
         self._sign_hess = self._sign_grad[:, :, None] * \
             self._sign_grad[:, None, :]
 
+    @property
+    def K(self):
+        return self._springs.EI / self._springs.voronoi_len[:, None]
+
     def _get_adjusted_material_directors(self, m1: np.ndarray, m2: np.ndarray):
         m1e = m1[self._edges_ind[:, 0]]
         m2e = m2[self._edges_ind[:, 0]] * self._sgn[:, 0, None]
@@ -35,7 +34,8 @@ class BendEnergy(ElasticEnergy):
 
     def get_strain(self, state: RobotState) -> np.ndarray:
         n0p, n1p, n2p = self._get_node_pos(state.q)
-        m1e, m2e, m1f, m2f = self._get_adjusted_material_directors(state.m1, state.m2)
+        m1e, m2e, m1f, m2f = self._get_adjusted_material_directors(
+            state.m1, state.m2)
 
         # Precompute common terms
         ee = n1p - n0p
@@ -56,9 +56,10 @@ class BendEnergy(ElasticEnergy):
 
     def grad_hess_strain(self, state: RobotState) -> typing.Tuple[np.ndarray, np.ndarray]:
         n0p, n1p, n2p = self._get_node_pos(state.q)
-        m1e, m2e, m1f, m2f = self._get_adjusted_material_directors(state.m1, state.m2)
+        m1e, m2e, m1f, m2f = self._get_adjusted_material_directors(
+            state.m1, state.m2)
         n_springs = n0p.shape[0]
-        
+
         Id3 = np.eye(3)[None, :, :]  # For broadcasting
 
         # Precompute common terms

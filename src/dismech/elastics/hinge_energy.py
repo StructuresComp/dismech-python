@@ -1,13 +1,13 @@
 import typing
 import numpy as np
 
-from .elastic_energyv2 import ElasticEnergy2
+from .elastic_energy import ElasticEnergy
 from ..state import RobotState
-from ..springs import HingeSpring
+from ..springs import HingeSprings
 
 
-class HingeEnergy(ElasticEnergy2):
-    def __init__(self, springs: typing.List[HingeSpring], initial_state: RobotState):
+class HingeEnergy(ElasticEnergy):
+    def __init__(self, springs: HingeSprings, initial_state: RobotState):
         super().__init__(springs, initial_state)
 
     @property

@@ -138,6 +138,7 @@ def get_interactive_animation_plotly(robot, t, qs, options: AnimationOptions):
         marker=dict(size=5, color=options.free_node_color),
         name='Free Nodes'
     )
+
     
     # Scatter for fixed nodes
     fixed_scatter = go.Scatter3d(
@@ -289,10 +290,29 @@ def get_interactive_animation_plotly(robot, t, qs, options: AnimationOptions):
             "currentvalue": {"prefix": "Frame: "}
         }]
     )
+
+    data = [free_scatter, fixed_scatter, edge_trace, face_trace]
+
+    x_min = nodes_all[:, :, 0].min()
+    x_max = nodes_all[:, :, 0].max()
+    y_min = nodes_all[:, :, 1].min()
+    y_max = nodes_all[:, :, 1].max()
+
+    if hasattr(robot.env, 'ground_z'):
+        floor = go.Surface(
+            z=np.full((2, 2), robot.env.ground_z),  # Flat z plane
+            x=np.array([[x_min-0.5, x_max+0.5], [x_min-0.5, x_max+0.5]]),
+            y=np.array([[y_min-0.5, y_min-0.5], [y_max+0.5, y_max+0.5]]),
+            showscale=False,
+            colorscale=[[0, 'lightgray'], [1, 'lightgray']],  # Flat color
+            opacity=0.9
+        )
+        data.append(floor)
+    
     
     # Create the figure with initial data and frames
     fig = go.Figure(
-        data=[free_scatter, fixed_scatter, edge_trace, face_trace],
+        data=data,
         layout=layout,
         frames=frames
     )

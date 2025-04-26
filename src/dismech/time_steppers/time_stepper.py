@@ -32,21 +32,22 @@ class TimeStepper(metaclass=abc.ABCMeta):
 
         # Initialize elastics
         self.elastic_energies: typing.Dict[str, ElasticEnergy] = {}
-        if robot.stretch_springs:
+        if robot.stretch_springs.N != 0:
             self.elastic_energies[STRETCH] = StretchEnergy(
                 robot.stretch_springs, robot.state)
-        if robot.hinge_springs:
+        if robot.hinge_springs.N != 0:
             self.elastic_energies[HINGE] = HingeEnergy(
                 robot.hinge_springs, robot.state)
         if robot.triangle_springs:
             self.elastic_energies[MIDEDGE] = TriangleEnergy(
                 robot.triangle_springs, robot.state)
-        if robot.bend_twist_springs:
+        if robot.bend_springs.N != 0:
             self.elastic_energies[BEND] = BendEnergy(
-                robot.bend_twist_springs, robot.state)
+                robot.bend_springs, robot.state
+            )
             if not robot.sim_params.two_d_sim:   # if 3d
                 self.elastic_energies[TWIST] = TwistEnergy(
-                    robot.bend_twist_springs, robot.state)
+                    robot.twist_springs, robot.state)
                 
         if "selfContact" in robot.env.ext_force_list:
             self._contact_energy = IMCEnergy(robot.contact_pairs, robot.env.delta, robot.env.h)
@@ -189,7 +190,7 @@ class TimeStepper(metaclass=abc.ABCMeta):
             robot.state.a1, robot.state.q, q)
         m1, m2 = robot.compute_material_directors(q, a1_iter, a2_iter)
         ref_twist = robot.compute_reference_twist(
-            robot.bend_twist_springs, q, a1_iter, robot.state.ref_twist)
+            robot.twist_springs, q, a1_iter, robot.state.ref_twist)
         tau = robot.update_pre_comp_shell(q)
 
         new_state = RobotState.init(
@@ -281,5 +282,5 @@ class TimeStepper(metaclass=abc.ABCMeta):
         a1, a2 = robot.compute_time_parallel(robot.state.a1, robot.state.q, q)
         m1, m2 = robot.compute_material_directors(q, a1, a2)
         ref_twist = robot.compute_reference_twist(
-            robot.bend_twist_springs, q, a1, robot.state.ref_twist)
+            robot.twist_springs, q, a1, robot.state.ref_twist)
         return robot.update(q=q, u=u, a=a, a1=a1, a2=a2, m1=m1, m2=m2, ref_twist=ref_twist)

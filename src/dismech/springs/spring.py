@@ -9,7 +9,8 @@ class Springs(metaclass=abc.ABCMeta):
     Viewable via .get_view(index), not list-style access.
     """
 
-    def __init__(self, N: int):
+    def __init__(self, N: int, C = None):
+        self.C = C
         self.N = N
         self._data = {}
         self._fields = []
@@ -57,8 +58,12 @@ class Springs(metaclass=abc.ABCMeta):
     def _initialize_fields(self, **kwargs):
         """Subclasses must initialize self._data and self._fields here."""
         self._fields += ['nat_strain', 'inc_strain']
-        self._data['nat_strain'] = np.full(self.N, np.nan, dtype=np.float64)
-        self._data['inc_strain'] = np.zeros(self.N, dtype=np.float64)
+        if self.C is not None:
+            self._data['nat_strain'] = np.full((self.N, self.C), np.nan, dtype=np.float64)
+            self._data['inc_strain'] = np.zeros((self.N, self.C), dtype=np.float64)
+        else:
+            self._data['nat_strain'] = np.full(self.N, np.nan, dtype=np.float64)
+            self._data['inc_strain'] = np.zeros(self.N, dtype=np.float64)
 
 
 class SpringView:

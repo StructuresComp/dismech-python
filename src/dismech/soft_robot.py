@@ -197,10 +197,11 @@ class SoftRobot:
             if geom.axs is not None:
                 dm_edges = self.__ref_len[:self.__n_edges_dof] * \
                     geom.axs * material.density
+                edge_mass = dm_edges * geom.jxs/geom.axs
             else:
                 dm_edges = self.__ref_len[:self.__n_edges_dof] * \
                     np.pi * (geom.rod_r0 ** 2) * material.density
-            edge_mass = dm_edges / 2 * (geom.rod_r0 ** 2)
+                edge_mass = dm_edges * (geom.rod_r0 ** 2)/2
             edge_dofs = 3 * self.__n_nodes + np.arange(self.__n_edges_dof)
             mass[edge_dofs] = edge_mass
 

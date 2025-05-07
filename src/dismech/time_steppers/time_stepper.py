@@ -11,7 +11,7 @@ from ..elastics import ElasticEnergy, StretchEnergy, HingeEnergy, BendEnergy, Tr
 from ..external_forces import compute_gravity_forces, compute_aerodynamic_forces_vectorized, compute_ground_contact, compute_ground_contact_friction
 from ..solvers import Solver, NumpySolver, PardisoSolver
 from ..visualizer import Visualizer
-from ..contact import IMCEnergy
+from ..contact import IMCEnergy, ShellContactEnergy
 
 _SOLVERS: typing.Dict[str, Solver] = {
     'np': NumpySolver, 'pardiso': PardisoSolver}

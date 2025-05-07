@@ -193,3 +193,20 @@ def construct_edge_combinations(edges: np.ndarray) -> np.ndarray:
         edges[i, None] == edges[j][:, None, ::-1]), axis=(1, 2))
     valid = np.column_stack((i[mask], j[mask]))
     return np.hstack((edges[valid[:, 0]], edges[valid[:, 1]]))
+
+def construct_triangle_combinations(triangles: np.ndarray) -> np.ndarray:
+    n = triangles.shape[0]
+    if n == 0:
+        return np.empty((0, 6), dtype=triangles.dtype)  # Return correct shape if empty
+
+    i, j = np.triu_indices(n, 1) # Generate all unique pairs of triangle indices (i < j)
+
+    # Check for shared nodes
+    shared_node_mask = np.array([
+        len(set(triangles[a]) & set(triangles[b])) > 0
+        for a, b in zip(i, j)
+    ])
+
+    valid = np.column_stack((i[~shared_node_mask], j[~shared_node_mask])) # Invert mask to get pairs with no shared nodes
+
+    return np.hstack((triangles[valid[:, 0]], triangles[valid[:, 1]])) # Return stacked triangles (each row: triangle1 + triangle2 = 6 node indices)

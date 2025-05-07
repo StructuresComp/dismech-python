@@ -6,7 +6,7 @@ import numpy as np
 
 from .state import RobotState
 from .stiffness import compute_rod_stiffness, compute_shell_stiffness
-from .frame_util import compute_reference_twist, compute_tfc_midedge, parallel_transport, construct_edge_combinations
+from .frame_util import compute_reference_twist, compute_tfc_midedge, parallel_transport, construct_edge_combinations, construct_triangle_combinations
 from .environment import Environment
 from .geometry import Geometry
 from .params import GeomParams, Material, SimParams
@@ -37,8 +37,13 @@ class SoftRobot:
             np.concatenate((geo.rod_edges, geo.rod_shell_joint_edges)
                            ) if geo.rod_shell_joint_edges.size else geo.rod_edges
         )
+        self.__triangle_combos = construct_triangle_combinations(geo.face_edges)
+
         self.__contact_pairs = [ContactPair(
             e, self.map_node_to_dof) for e in self.__edge_combos]
+        
+        self.__triangle_contact_pairs = [ContactPair(
+            t, self.map_node_to_dof) for t in self.__triangle_combos]
 
     def _init_geometry(self, geo: Geometry):
         """Initialize geometry properties"""
@@ -530,6 +535,10 @@ class SoftRobot:
     @property
     def contact_pairs(self):
         return self.__contact_pairs
+    
+    @property
+    def tri_contact_pairs(self):
+        return self.__triangle_contact_pairs
 
     # Visualization properties
 

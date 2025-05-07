@@ -9,7 +9,8 @@ class Environment:
         elif key == 'buoyancy':
             self.rho = kwargs['rho']
         elif key == 'viscous':
-            self.eta = kwargs['eta']
+            self.ct = kwargs['ct']
+            self.cn = kwargs['cn']
         elif key == 'aerodynamics':
             self.rho = kwargs['rho']    # REUSING
             self.cd = kwargs['cd']

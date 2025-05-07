@@ -1,6 +1,5 @@
 import typing
 import numpy as np
-from numba import njit
 
 from .time_stepper import TimeStepper
 from ..soft_robot import SoftRobot
@@ -24,15 +23,9 @@ class NewmarkBetaTimeStepper(TimeStepper):
         self._mass_diag = robot.mass_matrix
 
     def _compute_inertial_force_and_jacobian(self, robot: SoftRobot, q: np.ndarray) -> typing.Tuple[np.ndarray, np.ndarray]:
-        # Compute acceleration
         acceleration = self._compute_acceleration(robot, q)
-
-        # Inertial force: M * a_new
         inertial_force = self._mass_diag * acceleration
-
-        # Jacobian of inertial force w.r.t. q: (1/(beta*dt²)) * M
         jacobian = self._inv_beta_dt_sq * self._mass_diag
-
         return inertial_force, jacobian
 
     def _compute_acceleration(self, robot: SoftRobot, q: np.ndarray) -> np.ndarray:
@@ -42,6 +35,3 @@ class NewmarkBetaTimeStepper(TimeStepper):
     def _compute_velocity(self, robot: SoftRobot, q: np.ndarray) -> np.ndarray:
         acceleration = self._compute_acceleration(robot, q)
         return robot.state.u + self._dt * (self._one_minus_gamma * robot.state.a + self._gamma_dt * acceleration)
-
-    def _compute_evaluation_velocity(self, robot, q):
-        return self._compute_velocity(robot, q)

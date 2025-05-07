@@ -199,10 +199,11 @@ class SoftRobot:
             if geom.axs is not None:
                 dm_edges = self.__ref_len[:self.__n_edges_dof] * \
                     geom.axs * material.density
+                edge_mass = dm_edges * geom.jxs/geom.axs
             else:
                 dm_edges = self.__ref_len[:self.__n_edges_dof] * \
                     np.pi * (geom.rod_r0 ** 2) * material.density
-            edge_mass = dm_edges / 2 * (geom.rod_r0 ** 2)
+                edge_mass = dm_edges * (geom.rod_r0 ** 2)/2
             edge_dofs = 3 * self.__n_nodes + np.arange(self.__n_edges_dof)
             mass[edge_dofs] = edge_mass
 
@@ -411,12 +412,15 @@ class SoftRobot:
 
     def move_nodes(self, nodes: typing.List[int] | np.ndarray, perturbation: np.ndarray, axis: int | None = None):
         q = np.copy(self.state.q)
+        perturbation = np.asarray(perturbation)
+        if perturbation.size == 3:
+            perturbation = np.tile(perturbation, len(nodes))
         q[self._get_node_dof_mask(nodes, axis)] += perturbation
         return self.update(q)
 
     def twist_edges(self, edges: typing.List[int] | np.ndarray, perturbation: np.ndarray):
         q = np.copy(self.state.q)
-        q[self.map_edge_to_dof(edges)] += perturbation
+        q[self.map_edge_to_dof(edges)] += np.asarray(perturbation)
         return self.update(q)
 
     # Utility

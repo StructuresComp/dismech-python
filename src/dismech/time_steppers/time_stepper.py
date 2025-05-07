@@ -8,7 +8,7 @@ import numpy as np
 from ..soft_robot import SoftRobot
 from ..state import RobotState
 from ..elastics import ElasticEnergy, StretchEnergy, HingeEnergy, BendEnergy, TriangleEnergy, TwistEnergy
-from ..external_forces import compute_gravity_forces, compute_aerodynamic_forces_vectorized, compute_ground_contact, compute_ground_contact_friction
+from ..external_forces import compute_gravity_forces, compute_aerodynamic_forces_vectorized, compute_ground_contact, compute_ground_contact_friction, compute_rft
 from ..solvers import Solver, NumpySolver, PardisoSolver
 from ..visualizer import Visualizer
 from ..contact import IMCEnergy
@@ -173,7 +173,7 @@ class TimeStepper(metaclass=abc.ABCMeta):
         return q
 
     def _compute_evaluation_velocity(self, robot: SoftRobot, q: np.ndarray) -> np.ndarray:
-        return (q - robot.state.q) / robot.sim_params.dt
+        return self._compute_velocity(robot, q)
 
     def _compute_forces_and_jacobian(self, robot: SoftRobot, q, u):
         """ Computes forces and jacobian as sum of external and internal forces. """
@@ -220,6 +220,10 @@ class TimeStepper(metaclass=abc.ABCMeta):
                 F, J = compute_ground_contact_friction(robot, q, u)
             else:
                 F, J = compute_ground_contact(robot, q)
+            forces -= F
+            jacobian -= J
+        if "viscous" in robot.env.ext_force_list:
+            F, J = compute_rft(robot, q, u)
             forces -= F
             jacobian -= J
         

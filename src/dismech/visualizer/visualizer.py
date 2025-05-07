@@ -14,6 +14,7 @@ class Visualizer(metaclass=abc.ABCMeta):
 
 class MatplotlibLogger:
     """Logs the (x,y,z) coordinates of provided nodes on a position vs time line graph."""
+    ind_to_xyz = {0: 'x', 1: 'y', 2: 'z'}
     
     def __init__(self, nodes: np.ndarray):
         self._nodes = nodes
@@ -41,7 +42,7 @@ class MatplotlibLogger:
         # Update or create lines for each node
         for i, ind in enumerate(inds):
             if ind not in self.lines:
-                (line,) = self.ax.plot([], [], label=f"{ind}")
+                (line,) = self.ax.plot([], [], label=f"Node {int(ind / 3)}: {self.ind_to_xyz[ind % 3]}")
                 self.lines[ind] = line
             
             self.lines[ind].set_data(time_array, q_array[:, i])

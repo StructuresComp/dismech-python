@@ -19,6 +19,7 @@ def get_E(Delta, delta, h, k_1):
 class ContactEnergy(metaclass=abc.ABCMeta):
 
     def __init__(self, pairs: List[ContactPair], delta: float, h: float, k_1: float, scale: bool = True):
+        self.pairs = np.vstack([p.pair_nodes for p in pairs])
         self.ind = np.vstack([p.ind for p in pairs])
         if scale:
             self.scale = 1.0 / h

@@ -30,6 +30,11 @@ class ContactEnergy(metaclass=abc.ABCMeta):
         norm_delta = delta * self.scale
         norm_k_1 = k_1 / self.scale
         norm_h = h * self.scale
+
+        self.norm_delta = delta * self.scale
+        self.norm_h = h * self.scale
+        self.norm_k_1 = k_1 / self.scale
+
         self.__expr = get_E(Delta, norm_delta, norm_h, norm_k_1)
 
         self.__fn = sp.lambdify(Delta, self.__expr, modules='numpy')
@@ -41,6 +46,7 @@ class ContactEnergy(metaclass=abc.ABCMeta):
     def get_energy(self, q, output_scalar: bool = True):
         Delta = self.get_Delta(q)
         energy = self.__fn(Delta)
+        print("contact energy: ", energy)
         return np.sum(energy) if output_scalar else energy
 
     def grad_hess_energy(self, q):
@@ -51,6 +57,24 @@ class ContactEnergy(metaclass=abc.ABCMeta):
         grad_E_D = self.__grad_fn(Delta)
         hess_E_D = self.__hess_fn(Delta)  # shape (N,)
 
+        # to debug:
+        mask1 = (Delta > 0) & (Delta <= 2 * self.norm_h - self.norm_delta)
+        mask2 = (Delta > 2 * self.norm_h - self.norm_delta) & (Delta < 2 * self.norm_h + self.norm_delta)
+        mask3 = ~(mask1 | mask2)
+
+        print("Delta:", Delta)
+        # print("delta: ", self.norm_delta)
+        # print("h: ", self.norm_h)
+
+        print("upper limit for quadratic:", 2 * self.norm_h - self.norm_delta)
+        print("upper limit for smooth:", 2 * self.norm_h + self.norm_delta)
+
+        if np.any(mask1):
+            print("Branch 1 (quadratic):", Delta[mask1])
+        if np.any(mask2):
+            print("Branch 2 (smooth):", Delta[mask2])
+        # print("Branch 3 (zero):", Delta[mask3])
+
         grad_E = grad_Delta * grad_E_D[:, None]
 
         hess_E = hess_E_D[:, None, None] * \
@@ -60,6 +84,11 @@ class ContactEnergy(metaclass=abc.ABCMeta):
         # Scale
         grad_E *= self.scale
         hess_E *= self.scale ** 2
+
+        if np.any(grad_E):
+            print("gradE is:", grad_E)
+            print("hessE is:", hess_E)
+                
 
         n_dof = q.shape[0]
 

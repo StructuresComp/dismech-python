@@ -307,10 +307,14 @@ class ShellContactEnergy(ContactEnergy):
             
             ratio = [[0.0, 0.0, 0.0], [0.0, 0.0, 0.0]] # for now
 
+            print(contact_info)
+
             tri_nodes_updated, ratio_updated, node_mask = self._rearrange_triangles_for_contact(contact_type[k], contact_info, V1, V2, self.pairs[k,0:3], self.pairs[k,3:6], ratio)
             # ratios[k,:,:] = ratio_updated
             masks[k,:] = [3*i + j for i in node_mask for j in range(3)]
             min_dist[k] = dist
+        
+        print("min distance is: ", min_dist)
 
         return min_dist, contact_type, masks # , ratios
     
@@ -335,13 +339,15 @@ class ShellContactEnergy(ContactEnergy):
             idx1_pp = contact_info.get("idx1_pp")
             idx2_pp = contact_info.get("idx2_pp")
 
-            updated_tri1 = circshift(V1, idx1_pp - 1)
-            updated_face_nodes1 = circshift(face_nodes1, idx1_pp - 1)
-            ratios[0] = circshift(ratios[0], idx1_pp - 1)
+            updated_tri1 = circshift(V1, -idx1_pp)
+            updated_face_nodes1 = circshift(face_nodes1, -idx1_pp)
+            # print("updated_face_nodes1:", updated_face_nodes1)
+            ratios[0] = circshift(ratios[0], -idx1_pp)
 
-            updated_tri2 = circshift(V2, idx2_pp - 1)
-            updated_face_nodes2 = circshift(face_nodes2, idx2_pp - 1)
-            ratios[1] = circshift(ratios[1], idx2_pp - 1)
+            updated_tri2 = circshift(V2, -idx2_pp)
+            updated_face_nodes2 = circshift(face_nodes2, -idx2_pp)
+            # print("updated_face_nodes2:", updated_face_nodes2)
+            ratios[1] = circshift(ratios[1], -idx2_pp)
 
         elif contact_type == "PointToEdge":
             point = contact_info["point"]
@@ -349,25 +355,25 @@ class ShellContactEnergy(ContactEnergy):
 
             if any(np.allclose(point, V1[:, i]) for i in range(3)):
                 idx_point = find_vertex_index(V1, point)
-                updated_tri1 = circshift(V1, idx_point - 1)
-                updated_face_nodes1 = circshift(face_nodes1, idx_point - 1)
-                ratios[0] = circshift(ratios[0], idx_point - 1)
+                updated_tri1 = circshift(V1, -idx_point)
+                updated_face_nodes1 = circshift(face_nodes1, -idx_point)
+                ratios[0] = circshift(ratios[0], -idx_point)
 
                 idx_edge_start = find_vertex_index(V2, edge[0])
-                updated_tri2 = circshift(V2, idx_edge_start - 1)
-                updated_face_nodes2 = circshift(face_nodes2, idx_edge_start - 1)
-                ratios[1] = circshift(ratios[1], idx_edge_start - 1)
+                updated_tri2 = circshift(V2, -idx_edge_start)
+                updated_face_nodes2 = circshift(face_nodes2, -idx_edge_start)
+                ratios[1] = circshift(ratios[1], -idx_edge_start)
 
             else:
                 idx_point = find_vertex_index(V2, point)
-                updated_tri2 = circshift(V2, idx_point - 1)
-                updated_face_nodes2 = circshift(face_nodes2, idx_point - 1)
-                ratios[1] = circshift(ratios[1], idx_point - 1)
+                updated_tri2 = circshift(V2, -idx_point)
+                updated_face_nodes2 = circshift(face_nodes2, -idx_point)
+                ratios[1] = circshift(ratios[1], -idx_point)
 
                 idx_edge_start = find_vertex_index(V1, edge[0])
-                updated_tri1 = circshift(V1, idx_edge_start - 1)
-                updated_face_nodes1 = circshift(face_nodes1, idx_edge_start - 1)
-                ratios[0] = circshift(ratios[0], idx_edge_start - 1)
+                updated_tri1 = circshift(V1, -idx_edge_start)
+                updated_face_nodes1 = circshift(face_nodes1, -idx_edge_start)
+                ratios[0] = circshift(ratios[0], -idx_edge_start)
 
                 need_to_switch = True
 
@@ -376,41 +382,41 @@ class ShellContactEnergy(ContactEnergy):
             edge2 = contact_info["edge2"]
 
             idx1 = find_vertex_index(V1, edge1[0])
-            updated_tri1 = circshift(V1, idx1 - 1)
-            updated_face_nodes1 = circshift(face_nodes1, idx1 - 1)
-            ratios[0] = circshift(ratios[0], idx1 - 1)
+            updated_tri1 = circshift(V1, -idx1)
+            updated_face_nodes1 = circshift(face_nodes1, -idx1)
+            ratios[0] = circshift(ratios[0], -idx1)
 
             idx2 = find_vertex_index(V2, edge2[0])
-            updated_tri2 = circshift(V2, idx2 - 1)
-            updated_face_nodes2 = circshift(face_nodes2, idx2 - 1)
-            ratios[1] = circshift(ratios[1], idx2 - 1)
+            updated_tri2 = circshift(V2, -idx2)
+            updated_face_nodes2 = circshift(face_nodes2, -idx2)
+            ratios[1] = circshift(ratios[1], -idx2)
 
         elif contact_type == "PointToFace":
             point = contact_info["point"]
             if any(np.allclose(point, V1[:, i]) for i in range(3)):
                 idx_point = find_vertex_index(V1, point)
-                updated_tri1 = circshift(V1, idx_point - 1)
-                updated_face_nodes1 = circshift(face_nodes1, idx_point - 1)
-                ratios[0] = circshift(ratios[0], idx_point - 1)
+                updated_tri1 = circshift(V1, -idx_point)
+                updated_face_nodes1 = circshift(face_nodes1, -idx_point)
+                ratios[0] = circshift(ratios[0], -idx_point)
             else:
                 idx_point = find_vertex_index(V2, point)
-                updated_tri2 = circshift(V2, idx_point - 1)
-                updated_face_nodes2 = circshift(face_nodes2, idx_point - 1)
-                ratios[1] = circshift(ratios[1], idx_point - 1)
+                updated_tri2 = circshift(V2, idx_point)
+                updated_face_nodes2 = circshift(face_nodes2, idx_point)
+                ratios[1] = circshift(ratios[1], idx_point)
                 need_to_switch = True
 
         elif contact_type == "EdgeToFace":
             edge = contact_info["edge"]
             if any(np.allclose(edge[0], V1[:, i]) for i in range(3)):
                 idx_edge_start = find_vertex_index(V1, edge[0])
-                updated_tri1 = circshift(V1, idx_edge_start - 1)
-                updated_face_nodes1 = circshift(face_nodes1, idx_edge_start - 1)
-                ratios[0] = circshift(ratios[0], idx_edge_start - 1)
+                updated_tri1 = circshift(V1, -idx_edge_start)
+                updated_face_nodes1 = circshift(face_nodes1, -idx_edge_start)
+                ratios[0] = circshift(ratios[0], -idx_edge_start)
             else:
                 idx_edge_start = find_vertex_index(V2, edge[0])
-                updated_tri2 = circshift(V2, idx_edge_start - 1)
-                updated_face_nodes2 = circshift(face_nodes2, idx_edge_start - 1)
-                ratios[1] = circshift(ratios[1], idx_edge_start - 1)
+                updated_tri2 = circshift(V2, idx_edge_start)
+                updated_face_nodes2 = circshift(face_nodes2, idx_edge_start)
+                ratios[1] = circshift(ratios[1], idx_edge_start)
                 need_to_switch = True
 
         # Flatten triangles
@@ -429,6 +435,127 @@ class ShellContactEnergy(ContactEnergy):
         mask = [np.where(tri_pair_nodes_updated == orig_node)[0][0] for orig_node in original_node_order]
 
         return tri_pair_nodes_updated, ratios, mask
+
+    # def _rearrange_triangles_for_contact(self, contact_type, contact_info, V1, V2, face_nodes1, face_nodes2, ratios):
+    #     print(V1)
+    #     print(V2)
+    #     print("face_nodes1: ", face_nodes1)
+    #     print("face_nodes2: ", face_nodes2)
+    #     ratios = [np.asarray(r) for r in ratios]
+    #     need_to_switch = False
+    #     original_node_order = np.concatenate((face_nodes1, face_nodes2))
+
+    #     def find_vertex_index(V, point):
+    #         for i in range(3):
+    #             if np.allclose(V[:, i], point):
+    #                 return i
+    #         raise ValueError("Point not found in triangle")
+
+    #     def circshift(arr, k):
+    #         return np.roll(arr, -k, axis=-1)
+
+    #     def reorder_edge_first(V, face_nodes, edge):
+    #         idx1 = find_vertex_index(V, edge[0])
+    #         idx2 = find_vertex_index(V, edge[1])
+    #         if (idx2 - idx1) % 3 == 1:  # orientation preserved
+    #             perm = [idx1, idx2, 3 - idx1 - idx2]
+    #         else:
+    #             perm = [idx2, idx1, 3 - idx1 - idx2]
+    #         return V[:, perm], face_nodes[perm], perm
+
+    #     updated_tri1, updated_tri2 = V1.copy(), V2.copy()
+    #     updated_face_nodes1, updated_face_nodes2 = face_nodes1.copy(), face_nodes2.copy()
+
+    #     if contact_type == "PointToPoint":
+    #         idx1_pp = contact_info["idx1_pp"]
+    #         idx2_pp = contact_info["idx2_pp"]
+
+    #         local_idx1 = np.where(face_nodes1 == idx1_pp)[0][0]
+    #         updated_tri1 = circshift(V1, -local_idx1)
+    #         updated_face_nodes1 = circshift(face_nodes1, -local_idx1)
+    #         ratios[0] = circshift(ratios[0], -local_idx1)
+
+    #         local_idx2 = np.where(face_nodes2 == idx2_pp)[0][0]
+    #         updated_tri2 = circshift(V2, -local_idx2)
+    #         updated_face_nodes2 = circshift(face_nodes2, -local_idx2)
+    #         ratios[1] = circshift(ratios[1], -local_idx2)
+
+    #     elif contact_type == "PointToEdge":
+    #         point = contact_info["point"]
+    #         edge = contact_info["edge"]
+
+    #         if any(np.allclose(point, V1[:, i]) for i in range(3)):
+    #             idx_point = find_vertex_index(V1, point)
+    #             updated_tri1 = circshift(V1, -idx_point)
+    #             updated_face_nodes1 = circshift(face_nodes1, -idx_point)
+    #             ratios[0] = circshift(ratios[0], -idx_point)
+
+    #             updated_tri2, updated_face_nodes2, perm = reorder_edge_first(V2, face_nodes2, edge)
+    #             ratios[1] = ratios[1][perm]
+    #         else:
+    #             idx_point = find_vertex_index(V2, point)
+    #             updated_tri2 = circshift(V2, -idx_point)
+    #             updated_face_nodes2 = circshift(face_nodes2, -idx_point)
+    #             ratios[1] = circshift(ratios[1], -idx_point)
+
+    #             updated_tri1, updated_face_nodes1, perm = reorder_edge_first(V1, face_nodes1, edge)
+    #             ratios[0] = ratios[0][perm]
+    #             need_to_switch = True
+
+    #     elif contact_type == "EdgeToEdge":
+    #         edge1 = contact_info["edge1"]
+    #         edge2 = contact_info["edge2"]
+
+    #         updated_tri1, updated_face_nodes1, perm1 = reorder_edge_first(V1, face_nodes1, edge1)
+    #         ratios[0] = ratios[0][perm1]
+
+    #         updated_tri2, updated_face_nodes2, perm2 = reorder_edge_first(V2, face_nodes2, edge2)
+    #         ratios[1] = ratios[1][perm2]
+
+    #     elif contact_type == "PointToFace":
+    #         point = contact_info["point"]
+    #         if any(np.allclose(point, V1[:, i]) for i in range(3)):
+    #             idx_point = find_vertex_index(V1, point)
+    #             updated_tri1 = circshift(V1, -idx_point)
+    #             updated_face_nodes1 = circshift(face_nodes1, -idx_point)
+    #             ratios[0] = circshift(ratios[0], -idx_point)
+    #         else:
+    #             idx_point = find_vertex_index(V2, point)
+    #             updated_tri2 = circshift(V2, -idx_point)
+    #             updated_face_nodes2 = circshift(face_nodes2, -idx_point)
+    #             ratios[1] = circshift(ratios[1], -idx_point)
+    #             need_to_switch = True
+
+    #     elif contact_type == "EdgeToFace":
+    #         edge = contact_info["edge"]
+    #         if any(np.allclose(edge[0], V1[:, i]) for i in range(3)):
+    #             updated_tri1, updated_face_nodes1, perm = reorder_edge_first(V1, face_nodes1, edge)
+    #             ratios[0] = ratios[0][perm]
+    #         else:
+    #             updated_tri2, updated_face_nodes2, perm = reorder_edge_first(V2, face_nodes2, edge)
+    #             ratios[1] = ratios[1][perm]
+    #             need_to_switch = True
+
+    #     # Flatten triangles
+    #     tri1_flat = updated_tri1.T.reshape(-1)
+    #     tri2_flat = updated_tri2.T.reshape(-1)
+
+    #     if need_to_switch:
+    #         tri_pair_updated = np.concatenate((tri2_flat, tri1_flat))
+    #         tri_pair_nodes_updated = np.concatenate((updated_face_nodes2, updated_face_nodes1))
+    #         ratios = np.flipud(ratios)
+    #     else:
+    #         tri_pair_updated = np.concatenate((tri1_flat, tri2_flat))
+    #         tri_pair_nodes_updated = np.concatenate((updated_face_nodes1, updated_face_nodes2))
+
+    #     # Compute the mask (original position → new position)
+    #     mask = [np.where(tri_pair_nodes_updated == orig_node)[0][0] for orig_node in original_node_order]
+
+    #     print("updated nodes: ", tri_pair_nodes_updated)
+    #     print("node mask: ", mask)
+
+    #     return tri_pair_nodes_updated, ratios, mask
+
 
 
     def _evaluate_symbolic(self, q, fns, shape):
@@ -469,6 +596,8 @@ class ShellContactEnergy(ContactEnergy):
         if np.any(mask_p2p):
             args = get_inputs(mask_p2p)
             result[mask_p2p] = fn_p2p(*args)
+            print("args: ", args)
+            # print(result)
 
         # Process p2e
         if np.any(mask_p2e):

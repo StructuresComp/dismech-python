@@ -25,6 +25,15 @@ def piecewise_abs(x):
         (-x, x < 0),
         (0, True)  # At x = 0
     )
+# def piecewise_abs(x):
+#     x = sp.sympify(x)
+#     if x.is_number and x.has(sp.nan):
+#         return sp.S.Zero  # fallback for invalid numeric comparisons
+#     return sp.Piecewise(
+#         (x, x > 0),
+#         (-x, x < 0),
+#         (0, True)
+#     )
 
 
 def delta_p_to_p(x0, x1, x2, y0, y1, y2, a0, a1, a2, b0, b1, b2):

@@ -567,6 +567,7 @@ class ShellContactEnergy(ContactEnergy):
 
         # Restore original order
         inv_mask = np.argsort(mask, axis=1)
+        print("inv mask: ", inv_mask)
         if out.ndim == 2:
             out = np.take_along_axis(out, inv_mask, axis=1)
         elif out.ndim == 3:

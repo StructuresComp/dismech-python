@@ -34,539 +34,409 @@ class ShellContactEnergy(ContactEnergy):
             q, (self.__hess_pp_fn, self.__hess_pe_fn, self.__hess_ee_fn, self.__hess_pt_fn), (18, 18,))
         # print(hess_Delta)
         return grad_Delta, hess_Delta
-    
 
-    # helper for shell 
-    def _segment_triangle_intersection(self, p0, p1, tri, eps=1e-8):
+    ## helper functions (may move to separate file later)
+    # edge-edge distance (lumelsky)
+    def edge_edge_dist_batched(self, p, a, q, b):
         """
-        Determines if a segment (p0 to p1) intersects a triangle (given by 3 columns of tri).
+        Compute closest points between batches of edges. (Lumelsky method)
 
         Parameters:
-        - p0, p1: 3D numpy arrays (shape: (3,))
-        - tri: 3x3 numpy array (columns are triangle vertices)
-        - eps: numerical tolerance for degenerate configurations
+        p, a: start and direction vectors of first batch of edges (shape: [N, 3])
+        q, b: start and direction vectors of second batch of edges (shape: [N, 3])
 
         Returns:
-        - intersects: bool
-        - pt: intersection point (if any), else None
-        - tri_bary: barycentric coordinates in triangle
-        - seg_bary: barycentric coordinates on segment
+        cp: closest points on first edges (shape: [N, 3])
+        cq: closest points on second edges (shape: [N, 3])
         """
-        a, b, c = tri[:, 0], tri[:, 1], tri[:, 2]
-        direction = p1 - p0
-        edge1 = b - a
-        edge2 = c - a
+        A = np.sum(a * a, axis=1)
+        B = np.sum(a * b, axis=1)
+        C = np.sum(b * b, axis=1)
+        D = np.sum(a * (p - q), axis=1)
+        E = np.sum(b * (p - q), axis=1)
 
-        h = np.cross(direction, edge2)
-        det = np.dot(edge1, h)
+        det = A * C - B * B
+        s = np.zeros_like(det)
+        t = np.zeros_like(det)
 
-        if abs(det) < eps:
-            return False, None, None, None  # Segment and triangle are parallel
+        # Non-parallel case
+        mask = det > 1e-15
+        s[mask] = (B[mask] * E[mask] - C[mask] * D[mask]) / det[mask]
+        t[mask] = (A[mask] * E[mask] - B[mask] * D[mask]) / det[mask]
 
-        inv_det = 1.0 / det
-        s = p0 - a
-        u = np.dot(s, h) * inv_det
+        # Clamp s and t
+        s = np.clip(s, 0.0, 1.0)
+        t = np.clip(t, 0.0, 1.0)
 
-        q = np.cross(s, edge1)
-        v = np.dot(direction, q) * inv_det
-        t = np.dot(edge2, q) * inv_det
+        # Parallel case
+        mask_parallel = ~mask
+        mask_A = A > 1e-15
+        mask_C = C > 1e-15
+        mask_A_parallel = mask_parallel & mask_A
+        mask_C_parallel = mask_parallel & mask_C
 
-        intersects = (u >= 0) and (v >= 0) and (u + v <= 1) and (0 <= t <= 1)
-        if not intersects:
-            return False, None, None, None
+        s[mask_A_parallel] = -D[mask_A_parallel] / A[mask_A_parallel]
+        s[mask_A_parallel] = np.clip(s[mask_A_parallel], 0.0, 1.0)
+        t[mask_C_parallel] = (s[mask_C_parallel] * B[mask_C_parallel] + E[mask_C_parallel]) / C[mask_C_parallel]
+        t[mask_C_parallel] = np.clip(t[mask_C_parallel], 0.0, 1.0)
+        s[mask_A_parallel] = (t[mask_A_parallel] * B[mask_A_parallel] - D[mask_A_parallel]) / A[mask_A_parallel]
+        s[mask_A_parallel] = np.clip(s[mask_A_parallel], 0.0, 1.0)
 
-        pt = p0 + t * direction
-        tri_bary = np.array([1 - u - v, u, v])
-        seg_bary = np.array([1 - t, t])
+        cp = p + s[:, None] * a
+        cq = q + t[:, None] * b
 
-        return True, pt, tri_bary, seg_bary
+        return cp, cq
     
-    def _point_to_segment(self, p, a, b):
-        ab = b - a
-        ab_dot = np.dot(ab, ab)
-        
-        if ab_dot == 0:
-            # a and b are the same point
-            closest_point = a
-            dist = np.linalg.norm(p - a)
-            ratios = [0.5, 0.5]  # arbitrary
-            return dist, closest_point, ratios
+    # barycentric ratios
+    def compute_barycentric_batch(self, p, point):
+        """
+        Compute barycentric coordinates for a batch of triangle-point pairs.
 
-        t = np.dot(p - a, ab) / ab_dot
-        t = max(0.0, min(1.0, t))
-        closest_point = a + t * ab
-        dist = np.linalg.norm(p - closest_point)
-        ratios = [np.linalg.norm(b - closest_point) / np.linalg.norm(ab),
-                np.linalg.norm(a - closest_point) / np.linalg.norm(ab)]
-        return dist, closest_point, ratios
-    
-    import numpy as np
+        Parameters:
+        p: (batch_size, 3, 3) array representing triangle vertices
+        point: (batch_size, 3) array representing query points
 
-    def _segment_to_segment(self, a1, b1, a2, b2):
-        u = b1 - a1
-        v = b2 - a2
-        w0 = a1 - a2
+        Returns:
+        bary_coords: (batch_size, 3) array of barycentric coordinates (u, v, w)
+        """
+        v0 = p[:, 1] - p[:, 0]
+        v1 = p[:, 2] - p[:, 0]
+        v2 = point - p[:, 0]
 
-        a = np.dot(u, u)
-        b = np.dot(u, v)
-        c = np.dot(v, v)
-        d = np.dot(u, w0)
-        e = np.dot(v, w0)
-
-        D = a * c - b * b
-        s = 0.0
-        t = 0.0
-
-        if D > 1e-8:
-            s = (b * e - c * d) / D
-            t = (a * e - b * d) / D
-            s = max(0.0, min(1.0, s))
-            t = max(0.0, min(1.0, t))
-
-        p1 = a1 + s * u
-        p2 = a2 + t * v
-        dist = np.linalg.norm(p1 - p2)
-
-        ratio1 = [1 - s, s]  # [a1, b1]
-        ratio2 = [1 - t, t]  # [a2, b2]
-
-        return dist, p1, p2, ratio1, ratio2
-    
-    import numpy as np
-
-    def _point_to_triangle(self, p, tri):
-        a = tri[:, 0]
-        b = tri[:, 1]
-        c = tri[:, 2]
-        
-        # Triangle normal
-        n = np.cross(b - a, c - a)
-        n = n / np.linalg.norm(n)
-        
-        # Project point onto triangle plane
-        dist_signed = np.dot(p - a, n)
-        proj = p - dist_signed * n
-        dist = abs(dist_signed)
-        
-        # Compute barycentric coordinates
-        v0 = b - a
-        v1 = c - a
-        v2 = proj - a
-
-        d00 = np.dot(v0, v0)
-        d01 = np.dot(v0, v1)
-        d11 = np.dot(v1, v1)
-        d20 = np.dot(v2, v0)
-        d21 = np.dot(v2, v1)
+        d00 = np.einsum('ij,ij->i', v0, v0)
+        d01 = np.einsum('ij,ij->i', v0, v1)
+        d11 = np.einsum('ij,ij->i', v1, v1)
+        d20 = np.einsum('ij,ij->i', v2, v0)
+        d21 = np.einsum('ij,ij->i', v2, v1)
 
         denom = d00 * d11 - d01 * d01
-        v = (d11 * d20 - d01 * d21) / denom
-        w = (d00 * d21 - d01 * d20) / denom
-        u = 1 - v - w
 
-        bary_coords = np.array([u, v, w])
-        is_inside = np.all(bary_coords >= 0) and np.all(bary_coords <= 1)
+        # Initialize output
+        bary_coords = np.zeros((p.shape[0], 3))
 
-        return dist, is_inside, bary_coords
+        nondegenerate = np.abs(denom) >= 1e-10
 
+        v = np.zeros_like(denom)
+        w = np.zeros_like(denom)
 
+        v[nondegenerate] = (d11[nondegenerate] * d20[nondegenerate] - d01[nondegenerate] * d21[nondegenerate]) / denom[nondegenerate]
+        w[nondegenerate] = (d00[nondegenerate] * d21[nondegenerate] - d01[nondegenerate] * d20[nondegenerate]) / denom[nondegenerate]
+        u = 1.0 - v - w
 
-    # TO DO: make the below function better optimized
-    def evaluate_contact(self, q):
-        x, y, z, a, b, c = q[self.ind].reshape(-1, 6, 3).transpose(1, 0, 2)
+        bary_coords[:, 0] = u
+        bary_coords[:, 1] = v
+        bary_coords[:, 2] = w
 
-        contact_type = np.full(x.shape[0], "", dtype=object)
-        min_dist = np.zeros(x.shape[0])
-        # ratios = np.zeros((x.shape[0],2, 3))
-        masks = np.zeros((x.shape[0], 18), dtype=np.int64)
+        # Degenerate cases default to [1, 0, 0]
+        bary_coords[~nondegenerate] = np.array([1.0, 0.0, 0.0])
 
-        for k in range(x.shape[0]):
-            V1 = np.column_stack((x[k], y[k], z[k]))
-            V2 = np.column_stack((a[k], b[k], c[k]))
-            
-            contact_info = {}
-            dist = np.inf
-
-            # Point-to-point
-            for i in range(3):
-                for j in range(3):
-                    d = np.linalg.norm(V1[:, i] - V2[:, j])
-                    if d < dist:
-                        dist = d
-                        contact_type[k] = "PointToPoint"
-                        contact_info = {"p1": V1[:, i], "p2": V2[:, j], "idx1_pp": i, "idx2_pp": j}
-                        # ratio = np.zeros((2, 3))
-                        # ratio[0, i] = 1
-                        # ratio[1, j] = 1
-
-            # Point-to-edge (both directions)
-            for i in range(3):
-                for j in range(3):
-                    d, cp, r = self._point_to_segment(V1[:, i], V2[:, j], V2[:, (j + 1) % 3])
-                    # d = delta_p_to_e_shell(V1[0, i], V1[1, i], V1[2, i], V1[0, (i + 1) % 3], V1[1, (i + 1) % 3], V1[2, (i + 1) % 3], V1[0, (i + 2) % 3], V1[1, (i + 2) % 3], V1[2, (i + 2) % 3],
-                    #                               V2[0, j], V2[1, j], V2[2, j], V2[0, (j + 1) % 3], V2[1, (j + 1) % 3], V2[2, (j + 1) % 3], V2[0, (j + 2) % 3], V2[1, (j + 2) % 3], V2[2, (j + 2) % 3])
-                    # v1 = V1[:, [i, (i + 1) % 3, (i + 2) % 3]].flatten(order='F')
-                    # v2 = V2[:, [j, (j + 1) % 3, (j + 2) % 3]].flatten(order='F')
-                    # d = delta_p_to_e_shell(*v1, *v2)
-
-                    if d < dist:
-                        dist = d
-                        contact_type[k] = "PointToEdge"
-                        contact_info = {"point": V1[:, i], "edge": (V2[:, j], V2[:, (j + 1) % 3])}
-                        # ratio = np.zeros((2, 3))
-                        # ratio[0, i] = 1
-                        # ratio[1, j] = r[0]
-                        # ratio[1, (j + 1) % 3] = r[1]
-
-                    d, cp, r = self._point_to_segment(V2[:, i], V1[:, j], V1[:, (j + 1) % 3])
-                    # v1 = V1[:, [i, (i + 1) % 3, (i + 2) % 3]].flatten(order='F')
-                    # v2 = V2[:, [j, (j + 1) % 3, (j + 2) % 3]].flatten(order='F')
-
-                    # d = delta_p_to_e_shell(*v2, *v1)
-
-                    if d < dist:
-                        dist = d
-                        contact_type[k] = "PointToEdge"
-                        contact_info = {"point": V2[:, i], "edge": (V1[:, j], V1[:, (j + 1) % 3])}
-                        # ratio = np.zeros((2, 3))
-                        # ratio[1, i] = 1
-                        # ratio[0, j] = r[0]
-                        # ratio[0, (j + 1) % 3] = r[1]
-
-            # Edge-to-edge
-            for i in range(3):
-                a1, b1 = V1[:, i], V1[:, (i + 1) % 3]
-                # a1b1c1 = V1[:, [i, (i + 1) % 3, (i + 2) % 3]].flatten(order='F')
-                for j in range(3):
-                    a2, b2 = V2[:, j], V2[:, (j + 1) % 3]
-                    # a2b2c2 = V2[:, [j, (j + 1) % 3, (j + 2) % 3]].flatten(order='F')
-                    
-                    d, p1, p2, r1, r2 = self._segment_to_segment(a1, b1, a2, b2)
-                    # d = delta_e_to_e_shell(*a1b1c1, *a2b2c2)
-
-                    if d < dist:
-                        dist = d
-                        contact_type[k] = "EdgeToEdge"
-                        contact_info = {"edge1": (a1, b1), "edge2": (a2, b2)}
-                        # ratio = np.zeros((2, 3))
-                        # ratio[0, i] = r1[0]
-                        # ratio[0, (i + 1) % 3] = r1[1]
-                        # ratio[1, j] = r2[0]
-                        # ratio[1, (j + 1) % 3] = r2[1]
-
-            # Point-to-face
-            for i in range(3):
-                a1b1c1 = V1[:, [i, (i + 1) % 3, (i + 2) % 3]].flatten(order='F')
-                d, inside, bary = self._point_to_triangle(V1[:, i], V2)
-                # d = delta_p_to_t_shell(*a1b1c1, *(V2.flatten(order='F')))
-                if inside and d < dist:
-                # if d < dist:
-                    dist = d
-                    contact_type[k] = "PointToFace"
-                    contact_info = {"point": V1[:, i], "triangle": V2}
-                    # ratio = np.zeros((2, 3))
-                    # ratio[0, i] = 1
-                    # ratio[1, :] = bary
-
-                a2b2c2 = V2[:, [i, (i + 1) % 3, (i + 2) % 3]].flatten(order='F')
-                d, inside, bary = self._point_to_triangle(V2[:, i], V1)
-                # d = delta_p_to_t_shell( *a2b2c2, *(V1.flatten(order='F')))
-                if inside and d < dist:
-                # if d < dist:
-                    dist = d
-                    contact_type[k] = "PointToFace"
-                    contact_info = {"point": V2[:, i], "triangle": V1}
-                    # ratio = np.zeros((2, 3))
-                    # ratio[1, i] = 1
-                    # ratio[0, :] = bary
-
-            # Edge-to-face (intersection)
-            for i in range(3):
-                a, b = V1[:, i], V1[:, (i + 1) % 3]
-                intersects, pt, bary2, bary1 = self._segment_triangle_intersection(a, b, V2)
-                if intersects:
-                    contact_type[k] = "EdgeToFace"
-                    contact_info = {"edge": (a, b), "triangle": V2, "intersection": pt}
-                    dist = 0
-                    # ratio = np.zeros((2, 3))
-                    # ratio[0, i] = bary1[0]
-                    # ratio[0, (i + 1) % 3] = bary1[1]
-                    # ratio[1, :] = bary2
-                    break
-                a, b = V2[:, i], V2[:, (i + 1) % 3]
-                intersects, pt, bary2, bary1 = self._segment_triangle_intersection(a, b, V1)
-                if intersects:
-                    contact_type[k] = "EdgeToFace"
-                    contact_info = {"edge": (a, b), "triangle": V1, "intersection": pt}
-                    dist = 0
-                    # ratio = np.zeros((2, 3))
-                    # ratio[1, i] = bary1[0]
-                    # ratio[1, (i + 1) % 3] = bary1[1]
-                    # ratio[0, :] = bary2
-                    break
-            
-            ratio = [[0.0, 0.0, 0.0], [0.0, 0.0, 0.0]] # for now
-
-            print(contact_info)
-
-            tri_nodes_updated, ratio_updated, node_mask = self._rearrange_triangles_for_contact(contact_type[k], contact_info, V1, V2, self.pairs[k,0:3], self.pairs[k,3:6], ratio)
-            # ratios[k,:,:] = ratio_updated
-            masks[k,:] = [3*i + j for i in node_mask for j in range(3)]
-            min_dist[k] = dist
-        
-        print("min distance is: ", min_dist)
-
-        return min_dist, contact_type, masks # , ratios
+        return bary_coords
     
-    # TO DO: make the below function better optimized
-    def _rearrange_triangles_for_contact(self, contact_type, contact_info, V1, V2, face_nodes1, face_nodes2, ratios):
-        need_to_switch = False
-        original_node_order = np.concatenate((face_nodes1, face_nodes2))
+    # point to triangle distance
+    def point_triangle_dist_batched(self, p, q, Sv, Tv, min_dist_squared, min_p, min_q, shown_disjoint):
+        batch_size = p.shape[0]
 
-        def find_vertex_index(V, point):
-            for i in range(3):
-                if np.allclose(V[:, i], point):
-                    return i
-            raise ValueError("Point not found in triangle")
+        # Triangle normals
+        Sn = np.cross(Sv[:, 0], Sv[:, 1])
+        Snl = np.sum(Sn * Sn, axis=1)
+        Tn = np.cross(Tv[:, 0], Tv[:, 1])
+        Tnl = np.sum(Tn * Tn, axis=1)
 
-        def circshift(arr, k):
-            return np.roll(arr, -k, axis=-1)
+        # Project q onto plane of p
+        valid_p = Snl > 1e-15
+        p0 = p[:, 0]
+        Tp = np.einsum('ij,ikj->ik', Sn, p0[:, None, :] - q)
+        mask_p = valid_p & (np.all(Tp > 0, axis=1) | np.all(Tp < 0, axis=1))
+        index = np.argmin(np.abs(Tp), axis=1)
+        q_index = q[np.arange(batch_size), index]
+        z0 = np.cross(Sn, Sv[:, 0])
+        z1 = np.cross(Sn, Sv[:, 1])
+        z2 = np.cross(Sn, Sv[:, 2])
+        v0 = q_index - p[:, 0]
+        v1 = q_index - p[:, 1]
+        v2 = q_index - p[:, 2]
+        dot0 = np.einsum('ij,ij->i', v0, z0)
+        dot1 = np.einsum('ij,ij->i', v1, z1)
+        dot2 = np.einsum('ij,ij->i', v2, z2)
+        inside = (dot0 > 0) & (dot1 > 0) & (dot2 > 0) & mask_p
+        scale = Tp[np.arange(batch_size), index] / Snl
+        cp = q_index + Sn * scale[:, None]
+        cq = q_index
+        dists = np.sum((cp - cq) ** 2, axis=1)
+        update = inside & (dists < min_dist_squared)
+        min_dist_squared[update] = dists[update]
+        min_p[update] = cp[update]
+        min_q[update] = cq[update]
+        shown_disjoint[update] = True
 
-        updated_tri1, updated_tri2 = V1.copy(), V2.copy()
-        updated_face_nodes1, updated_face_nodes2 = face_nodes1.copy(), face_nodes2.copy()
+        # Project p onto plane of q
+        valid_q = Tnl > 1e-15
+        q0 = q[:, 0]
+        Sp = np.einsum('ij,ikj->ik', Tn, q0[:, None, :] - p)
+        mask_q = valid_q & (np.all(Sp > 0, axis=1) | np.all(Sp < 0, axis=1))
+        index = np.argmin(np.abs(Sp), axis=1)
+        p_index = p[np.arange(batch_size), index]
+        w0 = np.cross(Tn, Tv[:, 0])
+        w1 = np.cross(Tn, Tv[:, 1])
+        w2 = np.cross(Tn, Tv[:, 2])
+        u0 = p_index - q[:, 0]
+        u1 = p_index - q[:, 1]
+        u2 = p_index - q[:, 2]
+        dot0 = np.einsum('ij,ij->i', u0, w0)
+        dot1 = np.einsum('ij,ij->i', u1, w1)
+        dot2 = np.einsum('ij,ij->i', u2, w2)
+        inside_q = (dot0 > 0) & (dot1 > 0) & (dot2 > 0) & mask_q
+        scale = Sp[np.arange(batch_size), index] / Tnl
+        cq = p_index + Tn * scale[:, None]
+        cp = p_index
+        dists = np.sum((cp - cq) ** 2, axis=1)
+        update = inside_q & (dists < min_dist_squared)
+        min_dist_squared[update] = dists[update]
+        min_p[update] = cp[update]
+        min_q[update] = cq[update]
+        shown_disjoint[update] = True
 
-        if contact_type == "PointToPoint":
-            idx1_pp = contact_info.get("idx1_pp")
-            idx2_pp = contact_info.get("idx2_pp")
+        return min_dist_squared, min_p, min_q, shown_disjoint
 
-            updated_tri1 = circshift(V1, -idx1_pp)
-            updated_face_nodes1 = circshift(face_nodes1, -idx1_pp)
-            # print("updated_face_nodes1:", updated_face_nodes1)
-            ratios[0] = circshift(ratios[0], -idx1_pp)
+    
+    # triangle triangle distance (full vectorized implementation)
+    def distance_triangle_triangle_squared_batch(self, p, q):
+        """
+        Optimized vectorized computation of minimum squared distance between triangle pairs.
+        """
+        batch_size = p.shape[0]
 
-            updated_tri2 = circshift(V2, -idx2_pp)
-            updated_face_nodes2 = circshift(face_nodes2, -idx2_pp)
-            # print("updated_face_nodes2:", updated_face_nodes2)
-            ratios[1] = circshift(ratios[1], -idx2_pp)
+        Sv = np.stack([p[:, 1] - p[:, 0], p[:, 2] - p[:, 1], p[:, 0] - p[:, 2]], axis=1)
+        Tv = np.stack([q[:, 1] - q[:, 0], q[:, 2] - q[:, 1], q[:, 0] - q[:, 2]], axis=1)
 
-        elif contact_type == "PointToEdge":
-            point = contact_info["point"]
-            edge = contact_info["edge"]
+        min_dist_squared = np.full(batch_size, np.inf)
+        min_p = np.zeros((batch_size, 3))
+        min_q = np.zeros((batch_size, 3))
+        shown_disjoint = np.zeros(batch_size, dtype=bool)
 
-            if any(np.allclose(point, V1[:, i]) for i in range(3)):
-                idx_point = find_vertex_index(V1, point)
-                updated_tri1 = circshift(V1, -idx_point)
-                updated_face_nodes1 = circshift(face_nodes1, -idx_point)
-                ratios[0] = circshift(ratios[0], -idx_point)
+        for i in range(3):
+            for j in range(3):
+                edge_p = p[:, i]
+                edge_a = Sv[:, i]
+                edge_q = q[:, j]
+                edge_b = Tv[:, j]
 
-                idx_edge_start = find_vertex_index(V2, edge[0])
-                updated_tri2 = circshift(V2, -idx_edge_start)
-                updated_face_nodes2 = circshift(face_nodes2, -idx_edge_start)
-                ratios[1] = circshift(ratios[1], -idx_edge_start)
+                cp_temp, cq_temp = self.edge_edge_dist_batched(edge_p, edge_a, edge_q, edge_b)
+                v = cq_temp - cp_temp
+                dist_squared = np.sum(v * v, axis=1)
 
+                update_mask = dist_squared <= min_dist_squared
+                update_indices = np.where(update_mask)[0]
+
+                if update_indices.size > 0:
+                    min_dist_squared[update_mask] = dist_squared[update_mask]
+                    min_p[update_mask] = cp_temp[update_mask]
+                    min_q[update_mask] = cq_temp[update_mask]
+
+                    id_p = (i + 2) % 3
+                    z_p = p[update_mask, id_p] - cp_temp[update_mask]
+                    a = np.sum(z_p * v[update_mask], axis=1)
+
+                    id_q = (j + 2) % 3
+                    z_q = q[update_mask, id_q] - cq_temp[update_mask]
+                    b = np.sum(z_q * v[update_mask], axis=1)
+
+                    early_exit_sub = (a <= 0.0) & (b >= 0.0)
+                    early_exit = np.zeros(batch_size, dtype=bool)
+                    early_exit[update_indices[early_exit_sub]] = True
+
+                    early_exit_idxs = update_indices[early_exit_sub]
+                    min_dist_squared[early_exit_idxs] = dist_squared[early_exit_idxs]
+                    min_p[early_exit_idxs] = cp_temp[early_exit_idxs]
+                    min_q[early_exit_idxs] = cq_temp[early_exit_idxs]
+                    shown_disjoint[early_exit_idxs] = True
+
+                    remaining_mask = update_mask & ~early_exit
+                    if np.any(remaining_mask):
+                        a_arr = a[~early_exit_sub]
+                        b_arr = b[~early_exit_sub]
+                        a_arr[a_arr <= 0.0] = 0.0
+                        b_arr[b_arr > 0.0] = 0.0
+                        disjoint_update = (min_dist_squared[remaining_mask] - a_arr + b_arr) > 0.0
+                        shown_disjoint[remaining_mask] |= disjoint_update
+
+        # Process point-to-triangle projection checks
+        min_dist_squared, min_p, min_q, shown_disjoint = self.point_triangle_dist_batched(
+        p, q, Sv, Tv, min_dist_squared, min_p, min_q, shown_disjoint
+        )
+
+        # Vectorized barycentric computation
+        ratios_p = self.compute_barycentric_batch(p, min_p)
+        ratios_q = self.compute_barycentric_batch(q, min_q)
+
+        # Handle intersecting cases
+        intersecting = ~shown_disjoint
+        min_dist_squared[intersecting] = 0.0
+        min_p[intersecting] = p[intersecting, 0]
+        min_q[intersecting] = q[intersecting, 0]
+        ratios_p[intersecting] = np.array([1.0, 0.0, 0.0])
+        ratios_q[intersecting] = np.array([1.0, 0.0, 0.0])
+
+        return min_dist_squared, min_p, min_q, ratios_p, ratios_q
+
+
+    # reorder vertices
+    def reorder_triangle_pair_nodes_with_true_inverse_mask(self, ratios_p, ratios_q, node_indices):
+        """
+        Enhanced version with correct inverse permutation mask (position-based, not value-based).
+        """
+        batch_size = ratios_p.shape[0]
+        reorder_mask = np.copy(node_indices)
+        inverse_permutation_mask = np.tile(np.arange(6), (batch_size, 1))  # initialize as identity
+        contact_types = np.array(["Unknown"] * batch_size, dtype=object)
+
+        def classify_contact_type(rp, rq):
+            is_vertex = (np.sum(rp == 1.0, axis=1) == 1) & (np.sum(rp == 0.0, axis=1) == 2)
+            is_edge = (np.sum(rp > 0.0, axis=1) == 2) & (np.sum(rp == 0.0, axis=1) == 1)
+            is_face = np.all(rp > 0.0, axis=1)
+
+            types = np.array(["Unknown"] * batch_size, dtype=object)
+            mask_pp = is_vertex & (np.sum(rq == 1.0, axis=1) == 1) & (np.sum(rq == 0.0, axis=1) == 2)
+            mask_pe = is_vertex & ((np.sum(rq > 0.0, axis=1) == 2) & (np.sum(rq == 0.0, axis=1) == 1))
+            mask_ep = ((np.sum(rp > 0.0, axis=1) == 2) & (np.sum(rp == 0.0, axis=1) == 1)) & (np.sum(rq == 1.0, axis=1) == 1) & (np.sum(rq == 0.0, axis=1) == 2)
+            mask_ee = ((np.sum(rp > 0.0, axis=1) == 2) & (np.sum(rp == 0.0, axis=1) == 1)) & ((np.sum(rq > 0.0, axis=1) == 2) & (np.sum(rq == 0.0, axis=1) == 1))
+            mask_pf = is_vertex & np.all(rq > 0.0, axis=1)
+            mask_fp = np.all(rp > 0.0, axis=1) & (np.sum(rq == 1.0, axis=1) == 1) & (np.sum(rq == 0.0, axis=1) == 2)
+            mask_ef = ((np.sum(rp > 0.0, axis=1) == 2) & (np.sum(rp == 0.0, axis=1) == 1)) & np.all(rq > 0.0, axis=1)
+            mask_fe = np.all(rp > 0.0, axis=1) & ((np.sum(rq > 0.0, axis=1) == 2) & (np.sum(rq == 0.0, axis=1) == 1))
+
+            types[mask_pp] = "PointToPoint"
+            types[mask_pe | mask_ep] = "PointToEdge"
+            types[mask_ee] = "EdgeToEdge"
+            types[mask_pf | mask_fp] = "PointToFace"
+            types[mask_ef | mask_fe] = "EdgeToFace"
+
+            return types
+
+        contact_types = classify_contact_type(ratios_p, ratios_q)
+
+        for i in range(batch_size):
+            p_nodes = node_indices[i, :3].tolist()
+            q_nodes = node_indices[i, 3:].tolist()
+            original = p_nodes + q_nodes
+            rp, rq = ratios_p[i], ratios_q[i]
+            ctype = contact_types[i]
+
+            def rotate_to_start(lst, start_idx):
+                return lst[start_idx:] + lst[:start_idx]
+
+            def edge_reorder(lst, ei):
+                a, b = ei
+                lst_rot = rotate_to_start(lst, a)
+                if lst_rot[1] != lst[b]:
+                    lst_rot = [lst_rot[0], lst[b]] + [x for x in lst_rot if x not in [lst_rot[0], lst[b]]]
+                return lst_rot
+
+            if ctype == "PointToPoint":
+                pi = np.argmax(rp)
+                qi = np.argmax(rq)
+                new_p = rotate_to_start(p_nodes, pi)
+                new_q = rotate_to_start(q_nodes, qi)
+            elif ctype == "PointToEdge":
+                if (rp == 1.0).sum() == 1:
+                    vi = np.argmax(rp)
+                    ei = np.where(rq > 0.0)[0]
+                    new_p = rotate_to_start(p_nodes, vi)
+                    new_q = edge_reorder(q_nodes, ei)
+                else:
+                    vi = np.argmax(rq)
+                    ei = np.where(rp > 0.0)[0]
+                    new_q = rotate_to_start(q_nodes, vi)
+                    new_p = edge_reorder(p_nodes, ei)
+                    new_p, new_q = new_q, new_p  # swap
+            elif ctype == "EdgeToEdge":
+                ei_p = np.where(rp > 0.0)[0]
+                ei_q = np.where(rq > 0.0)[0]
+                new_p = edge_reorder(p_nodes, ei_p)
+                new_q = edge_reorder(q_nodes, ei_q)
+            elif ctype == "PointToFace":
+                if (rp == 1.0).sum() == 1:
+                    pi = np.argmax(rp)
+                    new_p = rotate_to_start(p_nodes, pi)
+                    new_q = q_nodes
+                else:
+                    qi = np.argmax(rq)
+                    new_q = rotate_to_start(q_nodes, qi)
+                    new_p = p_nodes
+                    new_p, new_q = new_q, new_p  # swap
+            elif ctype == "EdgeToFace":
+                if ((rp > 0.0).sum() == 2):
+                    ei = np.where(rp > 0.0)[0]
+                    new_p = edge_reorder(p_nodes, ei)
+                    new_q = q_nodes
+                else:
+                    ei = np.where(rq > 0.0)[0]
+                    new_q = edge_reorder(q_nodes, ei)
+                    new_p = p_nodes
+                    new_p, new_q = new_q, new_p  # swap
             else:
-                idx_point = find_vertex_index(V2, point)
-                updated_tri2 = circshift(V2, -idx_point)
-                updated_face_nodes2 = circshift(face_nodes2, -idx_point)
-                ratios[1] = circshift(ratios[1], -idx_point)
+                new_p, new_q = p_nodes, q_nodes
 
-                idx_edge_start = find_vertex_index(V1, edge[0])
-                updated_tri1 = circshift(V1, -idx_edge_start)
-                updated_face_nodes1 = circshift(face_nodes1, -idx_edge_start)
-                ratios[0] = circshift(ratios[0], -idx_edge_start)
+            new_order = new_p + new_q
+            reorder_mask[i] = new_order
 
-                need_to_switch = True
+            # compute true inverse permutation: where did each of the original entries end up
+            inverse = [new_order.index(val) for val in original]
+            inverse_permutation_mask[i] = inverse
 
-        elif contact_type == "EdgeToEdge":
-            edge1 = contact_info["edge1"]
-            edge2 = contact_info["edge2"]
+        return reorder_mask, contact_types.tolist(), inverse_permutation_mask
 
-            idx1 = find_vertex_index(V1, edge1[0])
-            updated_tri1 = circshift(V1, -idx1)
-            updated_face_nodes1 = circshift(face_nodes1, -idx1)
-            ratios[0] = circshift(ratios[0], -idx1)
+    def reorder_triangle_pair_dof_indices_with_inverse_vectorized(self,
+        ratios_p, ratios_q, node_indices, ind, dof_per_node=3):
+        """
+        Fully corrected vectorized version of DOF reordering with accurate inverse permutation mask.
+        """
+        batch_size = node_indices.shape[0]
 
-            idx2 = find_vertex_index(V2, edge2[0])
-            updated_tri2 = circshift(V2, -idx2)
-            updated_face_nodes2 = circshift(face_nodes2, -idx2)
-            ratios[1] = circshift(ratios[1], -idx2)
+        # Step 1: Get node reordering and inverse mapping
+        reorder_mask, contact_types, inverse_node_mask = self.reorder_triangle_pair_nodes_with_true_inverse_mask(
+            ratios_p, ratios_q, node_indices
+        )
 
-        elif contact_type == "PointToFace":
-            point = contact_info["point"]
-            if any(np.allclose(point, V1[:, i]) for i in range(3)):
-                idx_point = find_vertex_index(V1, point)
-                updated_tri1 = circshift(V1, -idx_point)
-                updated_face_nodes1 = circshift(face_nodes1, -idx_point)
-                ratios[0] = circshift(ratios[0], -idx_point)
-            else:
-                idx_point = find_vertex_index(V2, point)
-                updated_tri2 = circshift(V2, idx_point)
-                updated_face_nodes2 = circshift(face_nodes2, idx_point)
-                ratios[1] = circshift(ratios[1], idx_point)
-                need_to_switch = True
+        # Step 2: Build node index -> position map for each batch
+        reorder_node_positions = np.zeros_like(reorder_mask)
+        for i in range(batch_size):
+            # Find the position of each node in the original node_indices[i]
+            reorder_node_positions[i] = [np.where(node_indices[i] == node)[0][0] for node in reorder_mask[i]]
 
-        elif contact_type == "EdgeToFace":
-            edge = contact_info["edge"]
-            if any(np.allclose(edge[0], V1[:, i]) for i in range(3)):
-                idx_edge_start = find_vertex_index(V1, edge[0])
-                updated_tri1 = circshift(V1, -idx_edge_start)
-                updated_face_nodes1 = circshift(face_nodes1, -idx_edge_start)
-                ratios[0] = circshift(ratios[0], -idx_edge_start)
-            else:
-                idx_edge_start = find_vertex_index(V2, edge[0])
-                updated_tri2 = circshift(V2, idx_edge_start)
-                updated_face_nodes2 = circshift(face_nodes2, idx_edge_start)
-                ratios[1] = circshift(ratios[1], idx_edge_start)
-                need_to_switch = True
+        # Step 3: Apply node reordering to DOF blocks
+        node_dofs = ind.reshape(batch_size, 6, dof_per_node)
+        reordered_node_dofs = np.take_along_axis(
+            node_dofs,
+            reorder_node_positions[:, :, None].repeat(dof_per_node, axis=2),
+            axis=1
+        )
+        reordered_ind = reordered_node_dofs.reshape(batch_size, -1)
 
-        # Flatten triangles
-        tri1_flat = updated_tri1.T.reshape(-1)
-        tri2_flat = updated_tri2.T.reshape(-1)
+        # Step 4: Compute inverse DOF mask using inverse node permutation
+        inverse_dof_mask = np.zeros((batch_size, 6 * dof_per_node), dtype=int)
+        for i in range(batch_size):
+            inv_mask = []
+            for node_pos in inverse_node_mask[i]:
+                base = node_pos * dof_per_node
+                inv_mask.extend([base + j for j in range(dof_per_node)])
+            inverse_dof_mask[i] = inv_mask
 
-        if need_to_switch:
-            tri_pair_updated = np.concatenate((tri2_flat, tri1_flat))
-            tri_pair_nodes_updated = np.concatenate((updated_face_nodes2, updated_face_nodes1))
-            ratios = np.flipud(ratios)
-        else:
-            tri_pair_updated = np.concatenate((tri1_flat, tri2_flat))
-            tri_pair_nodes_updated = np.concatenate((updated_face_nodes1, updated_face_nodes2))
-
-        # Compute the mask (original position → new position)
-        mask = [np.where(tri_pair_nodes_updated == orig_node)[0][0] for orig_node in original_node_order]
-
-        return tri_pair_nodes_updated, ratios, mask
-
-    # def _rearrange_triangles_for_contact(self, contact_type, contact_info, V1, V2, face_nodes1, face_nodes2, ratios):
-    #     print(V1)
-    #     print(V2)
-    #     print("face_nodes1: ", face_nodes1)
-    #     print("face_nodes2: ", face_nodes2)
-    #     ratios = [np.asarray(r) for r in ratios]
-    #     need_to_switch = False
-    #     original_node_order = np.concatenate((face_nodes1, face_nodes2))
-
-    #     def find_vertex_index(V, point):
-    #         for i in range(3):
-    #             if np.allclose(V[:, i], point):
-    #                 return i
-    #         raise ValueError("Point not found in triangle")
-
-    #     def circshift(arr, k):
-    #         return np.roll(arr, -k, axis=-1)
-
-    #     def reorder_edge_first(V, face_nodes, edge):
-    #         idx1 = find_vertex_index(V, edge[0])
-    #         idx2 = find_vertex_index(V, edge[1])
-    #         if (idx2 - idx1) % 3 == 1:  # orientation preserved
-    #             perm = [idx1, idx2, 3 - idx1 - idx2]
-    #         else:
-    #             perm = [idx2, idx1, 3 - idx1 - idx2]
-    #         return V[:, perm], face_nodes[perm], perm
-
-    #     updated_tri1, updated_tri2 = V1.copy(), V2.copy()
-    #     updated_face_nodes1, updated_face_nodes2 = face_nodes1.copy(), face_nodes2.copy()
-
-    #     if contact_type == "PointToPoint":
-    #         idx1_pp = contact_info["idx1_pp"]
-    #         idx2_pp = contact_info["idx2_pp"]
-
-    #         local_idx1 = np.where(face_nodes1 == idx1_pp)[0][0]
-    #         updated_tri1 = circshift(V1, -local_idx1)
-    #         updated_face_nodes1 = circshift(face_nodes1, -local_idx1)
-    #         ratios[0] = circshift(ratios[0], -local_idx1)
-
-    #         local_idx2 = np.where(face_nodes2 == idx2_pp)[0][0]
-    #         updated_tri2 = circshift(V2, -local_idx2)
-    #         updated_face_nodes2 = circshift(face_nodes2, -local_idx2)
-    #         ratios[1] = circshift(ratios[1], -local_idx2)
-
-    #     elif contact_type == "PointToEdge":
-    #         point = contact_info["point"]
-    #         edge = contact_info["edge"]
-
-    #         if any(np.allclose(point, V1[:, i]) for i in range(3)):
-    #             idx_point = find_vertex_index(V1, point)
-    #             updated_tri1 = circshift(V1, -idx_point)
-    #             updated_face_nodes1 = circshift(face_nodes1, -idx_point)
-    #             ratios[0] = circshift(ratios[0], -idx_point)
-
-    #             updated_tri2, updated_face_nodes2, perm = reorder_edge_first(V2, face_nodes2, edge)
-    #             ratios[1] = ratios[1][perm]
-    #         else:
-    #             idx_point = find_vertex_index(V2, point)
-    #             updated_tri2 = circshift(V2, -idx_point)
-    #             updated_face_nodes2 = circshift(face_nodes2, -idx_point)
-    #             ratios[1] = circshift(ratios[1], -idx_point)
-
-    #             updated_tri1, updated_face_nodes1, perm = reorder_edge_first(V1, face_nodes1, edge)
-    #             ratios[0] = ratios[0][perm]
-    #             need_to_switch = True
-
-    #     elif contact_type == "EdgeToEdge":
-    #         edge1 = contact_info["edge1"]
-    #         edge2 = contact_info["edge2"]
-
-    #         updated_tri1, updated_face_nodes1, perm1 = reorder_edge_first(V1, face_nodes1, edge1)
-    #         ratios[0] = ratios[0][perm1]
-
-    #         updated_tri2, updated_face_nodes2, perm2 = reorder_edge_first(V2, face_nodes2, edge2)
-    #         ratios[1] = ratios[1][perm2]
-
-    #     elif contact_type == "PointToFace":
-    #         point = contact_info["point"]
-    #         if any(np.allclose(point, V1[:, i]) for i in range(3)):
-    #             idx_point = find_vertex_index(V1, point)
-    #             updated_tri1 = circshift(V1, -idx_point)
-    #             updated_face_nodes1 = circshift(face_nodes1, -idx_point)
-    #             ratios[0] = circshift(ratios[0], -idx_point)
-    #         else:
-    #             idx_point = find_vertex_index(V2, point)
-    #             updated_tri2 = circshift(V2, -idx_point)
-    #             updated_face_nodes2 = circshift(face_nodes2, -idx_point)
-    #             ratios[1] = circshift(ratios[1], -idx_point)
-    #             need_to_switch = True
-
-    #     elif contact_type == "EdgeToFace":
-    #         edge = contact_info["edge"]
-    #         if any(np.allclose(edge[0], V1[:, i]) for i in range(3)):
-    #             updated_tri1, updated_face_nodes1, perm = reorder_edge_first(V1, face_nodes1, edge)
-    #             ratios[0] = ratios[0][perm]
-    #         else:
-    #             updated_tri2, updated_face_nodes2, perm = reorder_edge_first(V2, face_nodes2, edge)
-    #             ratios[1] = ratios[1][perm]
-    #             need_to_switch = True
-
-    #     # Flatten triangles
-    #     tri1_flat = updated_tri1.T.reshape(-1)
-    #     tri2_flat = updated_tri2.T.reshape(-1)
-
-    #     if need_to_switch:
-    #         tri_pair_updated = np.concatenate((tri2_flat, tri1_flat))
-    #         tri_pair_nodes_updated = np.concatenate((updated_face_nodes2, updated_face_nodes1))
-    #         ratios = np.flipud(ratios)
-    #     else:
-    #         tri_pair_updated = np.concatenate((tri1_flat, tri2_flat))
-    #         tri_pair_nodes_updated = np.concatenate((updated_face_nodes1, updated_face_nodes2))
-
-    #     # Compute the mask (original position → new position)
-    #     mask = [np.where(tri_pair_nodes_updated == orig_node)[0][0] for orig_node in original_node_order]
-
-    #     print("updated nodes: ", tri_pair_nodes_updated)
-    #     print("node mask: ", mask)
-
-    #     return tri_pair_nodes_updated, ratios, mask
-
-
+        return reordered_ind, inverse_dof_mask, contact_types
 
     def _evaluate_symbolic(self, q, fns, shape):
-        min_dist, contact_type, mask = self.evaluate_contact(q)
-        print("contact type is:", contact_type)
-        print("mask:", mask)
-        ind = np.take_along_axis(self.ind, mask, axis=1)
-        out = self._evalulate_piecewise(q, ind,contact_type, *fns, shape)
+        # q is (18, B)
+        q_tri = q.reshape(2, 3, 3, -1, order='F')     # (2, 3, 3, B)
+        q_tri = np.transpose(q_tri, (3, 0, 2, 1))     # (B, 2, 3, 3)
+        dist_squared, cp, cq, ratios_p, ratios_q = self.distance_triangle_triangle_squared_batch(q_tri[:, 0], q_tri[:, 1])
+        
+        reordered_ind, inv_mask, contact_types = self.reorder_triangle_pair_dof_indices_with_inverse_vectorized(
+            ratios_p, ratios_q, self.pairs, self.ind
+        )
+          
+        out = self._evalulate_piecewise(q, reordered_ind,contact_types, *fns, shape)
 
         # Restore original order
-        inv_mask = np.argsort(mask, axis=1)
         print("inv mask: ", inv_mask)
         if out.ndim == 2:
             out = np.take_along_axis(out, inv_mask, axis=1)

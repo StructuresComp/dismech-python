@@ -425,19 +425,21 @@ class ShellContactEnergy(ContactEnergy):
         return reordered_ind, inverse_dof_mask, contact_types
 
     def _evaluate_symbolic(self, q, fns, shape):
-        # q is (18, B)
-        q_tri = q.reshape(2, 3, 3, -1, order='F')     # (2, 3, 3, B)
-        q_tri = np.transpose(q_tri, (3, 0, 2, 1))     # (B, 2, 3, 3)
+        # q[self.ind] is (B,18)
+        q_tri = q.reshape(-1, 2, 3, 3)    # (B, 2, 3, 3)   
         dist_squared, cp, cq, ratios_p, ratios_q = self.distance_triangle_triangle_squared_batch(q_tri[:, 0], q_tri[:, 1])
+        print("dist_square: ", dist_squared)
         
         reordered_ind, inv_mask, contact_types = self.reorder_triangle_pair_dof_indices_with_inverse_vectorized(
             ratios_p, ratios_q, self.pairs, self.ind
         )
+        print("reordered_ind: ", reordered_ind)
+        print("contact_types: ", contact_types)
           
         out = self._evalulate_piecewise(q, reordered_ind,contact_types, *fns, shape)
 
         # Restore original order
-        print("inv mask: ", inv_mask)
+        # print("inv mask: ", inv_mask)
         if out.ndim == 2:
             out = np.take_along_axis(out, inv_mask, axis=1)
         elif out.ndim == 3:
@@ -450,12 +452,18 @@ class ShellContactEnergy(ContactEnergy):
 
     def _evalulate_piecewise(self, q, ind, contact_type, fn_p2p, fn_p2e, fn_e2e, fn_p2t, shape=(18,)):
         result = np.zeros((ind.shape[0],) + shape)
+        contact_type = np.array(contact_type)
 
         # Masks based on contact_type string array
         mask_p2p = contact_type == "PointToPoint"
         mask_p2e = contact_type == "PointToEdge"
         mask_e2e = contact_type == "EdgeToEdge"
-        mask_p2t = contact_type == "PointToTriangle"
+        mask_p2t = contact_type == "PointToFace"
+
+        # print("mask_p2p", mask_p2p)
+        # print("mask_p2e", mask_p2e)
+        # print("mask_e2e", mask_e2e)
+        # print("mask_p2t", mask_p2t)
 
         # Helper to extract input arrays from q
         def get_inputs(mask):
@@ -467,7 +475,7 @@ class ShellContactEnergy(ContactEnergy):
         if np.any(mask_p2p):
             args = get_inputs(mask_p2p)
             result[mask_p2p] = fn_p2p(*args)
-            print("args: ", args)
+            # print("args: ", args)
             # print(result)
 
         # Process p2e

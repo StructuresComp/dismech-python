@@ -20,15 +20,22 @@ class AnimationOptions:
     z_lim: tuple = None
     camera_view: tuple = (30, 45)  # (elevation, azimuth) angles in degrees
     follow_data: bool = False
+    plot_step: int = 1
 
 
 def get_animation(robot, t, qs, options: AnimationOptions):
-    n_frames = qs.shape[0]
+    frame_indices = list(range(0, qs.shape[0], options.plot_step))
+    if frame_indices[-1] != qs.shape[0] - 1:
+        frame_indices.append(qs.shape[0] - 1) # include final configuration if not already included
+    qs_sampled = qs[frame_indices]
+
     n_nodes = len(robot.node_dof_indices)
+    n_frames = len(frame_indices)
+    print(n_frames)
 
     # Precompute nodes
     node_dof_list = [robot.map_node_to_dof(i) for i in range(n_nodes)]
-    nodes_all = np.array([[q[dofs] for dofs in node_dof_list] for q in qs])
+    nodes_all = np.array([[q[dofs] for dofs in node_dof_list] for q in qs_sampled])
 
     # Determine which nodes are fixed
     fixed_set = set(robot.fixed_dof)
@@ -92,8 +99,7 @@ def get_animation(robot, t, qs, options: AnimationOptions):
             ax.set_ylim(nodes[:, 1].min(), nodes[:, 1].max())
             ax.set_zlim(nodes[:, 2].min(), nodes[:, 2].max())
 
-        time_text.set_text(
-            f"Time: {t[frame]:.2f}s (Step: {frame+1}/{n_frames})")
+        time_text.set_text(f"Time: {t[frame_indices[frame]]:.2f}s (Step: {frame_indices[frame]+1}/{qs.shape[0]})")
         return scatter_free, scatter_fixed, edge_collection, face_collection, time_text
 
     ani = FuncAnimation(fig, update, frames=n_frames,
@@ -107,141 +113,104 @@ def rgba_to_str(color):
         return f"rgba({int(r*255)}, {int(g*255)}, {int(b*255)}, {a})"
     return color
 
-def get_interactive_animation_plotly(robot, t, qs, options: AnimationOptions):
-    n_frames = qs.shape[0]
+def get_interactive_animation_plotly(robot, t, qs, options):
+    plot_step = options.plot_step
+    frame_indices = list(range(0, qs.shape[0], plot_step))
+    if frame_indices[-1] != qs.shape[0] - 1:
+        frame_indices.append(qs.shape[0] - 1)
+
+    qs_sampled = qs[frame_indices]
+    t_sampled = t[frame_indices]
+    n_frames = len(frame_indices)
     n_nodes = len(robot.node_dof_indices)
-    
-    # Precompute nodes for each frame: nodes_all[frame][node] gives a (x,y,z)
+
     node_dof_list = [robot.map_node_to_dof(i) for i in range(n_nodes)]
-    nodes_all = np.array([[q[dofs] for dofs in node_dof_list] for q in qs])
-    
-    # Identify fixed nodes based on fixed dofs
+    nodes_all = np.array([[q[dofs] for dofs in node_dof_list] for q in qs_sampled])
+
     fixed_set = set(robot.fixed_dof)
-    node_is_fixed = np.array([all(d in fixed_set for d in dofs)
-                              for dofs in node_dof_list])
-    
-    # Precompute indices for free and fixed nodes
+    node_is_fixed = np.array([all(d in fixed_set for d in dofs) for dofs in node_dof_list])
+
     free_indices = np.where(~node_is_fixed)[0]
     fixed_indices = np.where(node_is_fixed)[0]
-    
-    # Create an initial frame (frame 0)
+
     nodes0 = nodes_all[0]
     free_nodes0 = nodes0[free_indices]
     fixed_nodes0 = nodes0[fixed_indices]
-    
-    # Scatter for free nodes
+
     free_scatter = go.Scatter3d(
-        x=free_nodes0[:, 0],
-        y=free_nodes0[:, 1],
-        z=free_nodes0[:, 2],
+        x=free_nodes0[:, 0], y=free_nodes0[:, 1], z=free_nodes0[:, 2],
         mode='markers',
         marker=dict(size=5, color=options.free_node_color),
         name='Free Nodes'
     )
 
-    
-    # Scatter for fixed nodes
     fixed_scatter = go.Scatter3d(
-        x=fixed_nodes0[:, 0],
-        y=fixed_nodes0[:, 1],
-        z=fixed_nodes0[:, 2],
+        x=fixed_nodes0[:, 0], y=fixed_nodes0[:, 1], z=fixed_nodes0[:, 2],
         mode='markers',
         marker=dict(size=5, color=options.fixed_node_color),
         name='Fixed Nodes'
     )
-    
-    # Create one trace for all edges (using None to separate segments)
+
     edge_x, edge_y, edge_z = [], [], []
     for (i, j) in robot.edges:
         edge_x += [nodes0[i][0], nodes0[j][0], None]
         edge_y += [nodes0[i][1], nodes0[j][1], None]
         edge_z += [nodes0[i][2], nodes0[j][2], None]
     edge_trace = go.Scatter3d(
-        x=edge_x,
-        y=edge_y,
-        z=edge_z,
+        x=edge_x, y=edge_y, z=edge_z,
         mode='lines',
         line=dict(color=options.edge_color, width=2),
         name='Edges'
     )
-    
-    # Use a Mesh3d trace for triangular faces
-    # Note: Mesh3d uses a single set of vertices, so the connectivity (I, J, K) remains the same.
+
     I, J, K = [], [], []
     for (i, j, k) in robot.face_nodes_shell:
         I.append(i)
         J.append(j)
         K.append(k)
     face_trace = go.Mesh3d(
-        x=nodes0[:, 0],
-        y=nodes0[:, 1],
-        z=nodes0[:, 2],
-        i=I,
-        j=J,
-        k=K,
+        x=nodes0[:, 0], y=nodes0[:, 1], z=nodes0[:, 2],
+        i=I, j=J, k=K,
         color=rgba_to_str(options.face_color),
         opacity=options.face_color[3] if len(options.face_color) >= 4 else 1.0,
         name='Faces',
         showscale=False
     )
-    
-    # Set up camera using the provided camera_view (conversion from elevation/azimuth)
+
     elev, azim = options.camera_view
-    r = 2  # Radius for camera distance (adjust as needed)
+    r = 2
     camera_eye = dict(
         x=r * math.cos(math.radians(elev)) * math.cos(math.radians(azim)),
         y=r * math.cos(math.radians(elev)) * math.sin(math.radians(azim)),
         z=r * math.sin(math.radians(elev))
     )
-    
-    # Build animation frames
+
     frames = []
-    for frame_idx in range(n_frames):
-        nodes = nodes_all[frame_idx]
+    for anim_idx, frame_idx in enumerate(frame_indices):
+        nodes = nodes_all[anim_idx]
         free_nodes_frame = nodes[free_indices]
         fixed_nodes_frame = nodes[fixed_indices]
-        
-        # Update edges for current frame
+
         edge_x_frame, edge_y_frame, edge_z_frame = [], [], []
         for (i, j) in robot.edges:
             edge_x_frame += [nodes[i][0], nodes[j][0], None]
             edge_y_frame += [nodes[i][1], nodes[j][1], None]
             edge_z_frame += [nodes[i][2], nodes[j][2], None]
-        
+
         frame_data = [
-            dict(type='scatter3d',
-                 name='Free Nodes',
-                 x=free_nodes_frame[:, 0],
-                 y=free_nodes_frame[:, 1],
-                 z=free_nodes_frame[:, 2]),
-            dict(type='scatter3d',
-                 name='Fixed Nodes',
-                 x=fixed_nodes_frame[:, 0],
-                 y=fixed_nodes_frame[:, 1],
-                 z=fixed_nodes_frame[:, 2]),
-            dict(type='scatter3d',
-                 name='Edges',
-                 x=edge_x_frame,
-                 y=edge_y_frame,
-                 z=edge_z_frame),
-            dict(type='mesh3d',
-                 name='Faces',
-                 x=nodes[:, 0],
-                 y=nodes[:, 1],
-                 z=nodes[:, 2],
-                 i=I,
-                 j=J,
-                 k=K)
+            dict(type='scatter3d', name='Free Nodes', x=free_nodes_frame[:, 0], y=free_nodes_frame[:, 1], z=free_nodes_frame[:, 2]),
+            dict(type='scatter3d', name='Fixed Nodes', x=fixed_nodes_frame[:, 0], y=fixed_nodes_frame[:, 1], z=fixed_nodes_frame[:, 2]),
+            dict(type='scatter3d', name='Edges', x=edge_x_frame, y=edge_y_frame, z=edge_z_frame),
+            dict(type='mesh3d', name='Faces', x=nodes[:, 0], y=nodes[:, 1], z=nodes[:, 2], i=I, j=J, k=K)
         ]
-        frames.append(dict(name=str(frame_idx),
+        frames.append(dict(name=str(anim_idx),
                            data=frame_data,
                            layout=dict(annotations=[dict(
-                               text=f"Time: {t[frame_idx]:.2f}s (Step: {frame_idx+1}/{n_frames})",
+                               text=f"Time: {t_sampled[anim_idx]:.2f}s (Step: {frame_idx+1}/{qs.shape[0]})",
                                showarrow=False,
                                x=0.05, y=0.95, xref="paper", yref="paper"
                            )])))
-    
-    # Define layout with slider and play/pause buttons
+
     layout = go.Layout(
         title=options.title,
         scene=dict(
@@ -249,22 +218,14 @@ def get_interactive_animation_plotly(robot, t, qs, options: AnimationOptions):
             yaxis_title='Y Position',
             zaxis_title='Z Position',
             camera=dict(eye=camera_eye),
-            xaxis=dict(range=options.x_lim if options.x_lim is not None else [nodes_all[:, :, 0].min(), nodes_all[:, :, 0].max()]),
-            yaxis=dict(range=options.y_lim if options.y_lim is not None else [nodes_all[:, :, 1].min(), nodes_all[:, :, 1].max()]),
-            zaxis=dict(range=options.z_lim if options.z_lim is not None else [nodes_all[:, :, 2].min(), nodes_all[:, :, 2].max()])
+            xaxis=dict(range=options.x_lim if options.x_lim else [nodes_all[:, :, 0].min(), nodes_all[:, :, 0].max()]),
+            yaxis=dict(range=options.y_lim if options.y_lim else [nodes_all[:, :, 1].min(), nodes_all[:, :, 1].max()]),
+            zaxis=dict(range=options.z_lim if options.z_lim else [nodes_all[:, :, 2].min(), nodes_all[:, :, 2].max()])
         ),
         updatemenus=[{
             "buttons": [
-                {
-                    "args": [None, {"frame": {"duration": 50, "redraw": True}, "fromcurrent": True}],
-                    "label": "Play",
-                    "method": "animate"
-                },
-                {
-                    "args": [[None], {"frame": {"duration": 0, "redraw": True}, "mode": "immediate"}],
-                    "label": "Pause",
-                    "method": "animate"
-                }
+                {"args": [None, {"frame": {"duration": 50, "redraw": True}, "fromcurrent": True}], "label": "Play", "method": "animate"},
+                {"args": [[None], {"frame": {"duration": 0, "redraw": True}, "mode": "immediate"}], "label": "Pause", "method": "animate"}
             ],
             "direction": "left",
             "pad": {"r": 10, "t": 87},
@@ -277,12 +238,9 @@ def get_interactive_animation_plotly(robot, t, qs, options: AnimationOptions):
         }],
         sliders=[{
             "steps": [
-                {
-                    "args": [[str(frame_idx)], {"frame": {"duration": 50, "redraw": True}, "mode": "immediate"}],
-                    "label": str(frame_idx),
-                    "method": "animate"
-                }
-                for frame_idx in range(n_frames)
+                {"args": [[str(i)], {"frame": {"duration": 50, "redraw": True}, "mode": "immediate"}],
+                 "label": str(frame_indices[i]), "method": "animate"}
+                for i in range(n_frames)
             ],
             "transition": {"duration": 0},
             "x": 0.1,
@@ -300,21 +258,14 @@ def get_interactive_animation_plotly(robot, t, qs, options: AnimationOptions):
 
     if hasattr(robot.env, 'ground_z'):
         floor = go.Surface(
-            z=np.full((2, 2), robot.env.ground_z),  # Flat z plane
+            z=np.full((2, 2), robot.env.ground_z),
             x=np.array([[x_min-0.5, x_max+0.5], [x_min-0.5, x_max+0.5]]),
             y=np.array([[y_min-0.5, y_min-0.5], [y_max+0.5, y_max+0.5]]),
             showscale=False,
-            colorscale=[[0, 'lightgray'], [1, 'lightgray']],  # Flat color
+            colorscale=[[0, 'lightgray'], [1, 'lightgray']],
             opacity=0.9
         )
         data.append(floor)
-    
-    
-    # Create the figure with initial data and frames
-    fig = go.Figure(
-        data=data,
-        layout=layout,
-        frames=frames
-    )
-    
+
+    fig = go.Figure(data=data, layout=layout, frames=frames)
     return fig

@@ -7,14 +7,32 @@ import sympy as sp
 from .contact_pairs import ContactPair
 
 
-def get_E(Delta, delta, h, k_1):
-    return sp.Piecewise(
-        ((2 * h - Delta) ** 2, sp.And(Delta > 0, Delta <= 2 * h - delta)),
-        ((1 / k_1 * (sp.log(1 + sp.exp(k_1 * (2 * h - Delta))))) ** 2,
-         sp.And(Delta > 2 * h - delta, Delta < 2 * h + delta)),
-        (0, True),
+def compute_energy_grad_hess(Delta, delta, h, k_1):
+    E = np.zeros_like(Delta)
+    grad_E = np.zeros_like(Delta)
+    hess_E = np.zeros_like(Delta)
+
+    mask1 = (Delta > 0) & (Delta <= 2 * h - delta)
+    mask2 = (Delta > 2 * h - delta) & (Delta < 2 * h + delta)
+
+    # Quadratic region
+    E[mask1] = (2 * h - Delta[mask1]) ** 2
+    grad_E[mask1] = -2 * (2 * h - Delta[mask1])
+    hess_E[mask1] = 2.0
+
+    # Smooth transition region
+    exp_term = np.exp(k_1 * (2 * h - Delta[mask2]))
+    log_term = np.log(1 + exp_term)
+    denom = 1 + exp_term
+
+    E[mask2] = (1 / k_1 * log_term) ** 2
+    grad_E[mask2] = -2 * (1 / k_1 * log_term) * (k_1 * exp_term / denom)
+    hess_E[mask2] = (
+        2 * exp_term / (k_1 * denom ** 2) *
+        (log_term - (k_1 * exp_term / denom))
     )
 
+    return E, grad_E, hess_E
 
 class ContactEnergy(metaclass=abc.ABCMeta):
 
@@ -35,68 +53,60 @@ class ContactEnergy(metaclass=abc.ABCMeta):
         self.norm_h = h * self.scale
         self.norm_k_1 = k_1 / self.scale
 
-        self.__expr = get_E(Delta, norm_delta, norm_h, norm_k_1)
+        # debug:
+        print("delta:", self.norm_delta)
+        print("h:", self.norm_h)
+        print("K1:", self.norm_k_1)
+        print("scale: ", self.scale)
 
-        self.__fn = sp.lambdify(Delta, self.__expr, modules='numpy')
-        self.__grad_fn = sp.lambdify(Delta, sp.diff(
-            self.__expr, Delta), modules='numpy')
-        self.__hess_fn = sp.lambdify(Delta, sp.diff(
-            self.__expr, Delta, Delta), modules='numpy')
+        print("upper limit for quadratic:", 2 * self.norm_h - self.norm_delta)
+        print("upper limit for smooth:", 2 * self.norm_h + self.norm_delta)
+        
+        # self.__expr = get_E(Delta, norm_delta, norm_h, norm_k_1)
+        # grad_expr = get_grad_E(Delta, norm_delta, norm_h, norm_k_1)
+        # hess_expr = get_hess_E(Delta, norm_delta, norm_h, norm_k_1)
+
+        # self.__fn = sp.lambdify(Delta, self.__expr, modules='numpy')
+        # self.__grad_fn = sp.lambdify(Delta, grad_expr, modules='numpy')
+        # self.__hess_fn = sp.lambdify(Delta, hess_expr, modules='numpy')
+
+        # self.__fn = sp.lambdify(Delta, self.__expr, modules='numpy')
+        # self.__grad_fn = sp.lambdify(Delta, sp.diff(
+        #     self.__expr, Delta), modules='numpy')
+        # self.__hess_fn = sp.lambdify(Delta, sp.diff(
+        #     self.__expr, Delta, Delta), modules='numpy')
 
     def get_energy(self, q, output_scalar: bool = True):
         Delta = self.get_Delta(q)
-        energy = self.__fn(Delta)
-        print("contact energy: ", energy)
-        return np.sum(energy) if output_scalar else energy
+        E, _, _ = compute_energy_grad_hess(Delta, self.norm_delta, self.norm_h, self.norm_k_1)
+        print("contact energy: ", E)
+        return np.sum(E) if output_scalar else E
 
     def grad_hess_energy(self, q):
         q = q * self.scale
         Delta = self.get_Delta(q)
         grad_Delta, hess_Delta = self.get_grad_hess_Delta(q)
 
-        grad_E_D = self.__grad_fn(Delta)
-        hess_E_D = self.__hess_fn(Delta)  # shape (N,)
-
-        # to debug:
-        mask1 = (Delta > 0) & (Delta <= 2 * self.norm_h - self.norm_delta)
-        mask2 = (Delta > 2 * self.norm_h - self.norm_delta) & (Delta < 2 * self.norm_h + self.norm_delta)
-        mask3 = ~(mask1 | mask2)
-
-        print("Delta:", Delta)
-        # print("delta: ", self.norm_delta)
-        # print("h: ", self.norm_h)
-
-        print("upper limit for quadratic:", 2 * self.norm_h - self.norm_delta)
-        print("upper limit for smooth:", 2 * self.norm_h + self.norm_delta)
-
-        if np.any(mask1):
-            print("Branch 1 (quadratic):", Delta[mask1])
-        if np.any(mask2):
-            print("Branch 2 (smooth):", Delta[mask2])
-        # print("Branch 3 (zero):", Delta[mask3])
+        E, grad_E_D, hess_E_D = compute_energy_grad_hess(Delta, self.norm_delta, self.norm_h, self.norm_k_1)
 
         grad_E = grad_Delta * grad_E_D[:, None]
-
-        hess_E = hess_E_D[:, None, None] * \
-            np.einsum('ni,nj->nij', grad_Delta, grad_Delta)
+        hess_E = hess_E_D[:, None, None] * np.einsum('ni,nj->nij', grad_Delta, grad_Delta)
         hess_E += grad_E_D[:, None, None] * hess_Delta
 
-        # Scale
         grad_E *= self.scale
         hess_E *= self.scale ** 2
 
         if np.any(grad_E):
+            print("NONZERO contact force/jacobian")
             print("gradE is:", grad_E)
             print("hessE is:", hess_E)
-                
 
         n_dof = q.shape[0]
 
         Fs = np.zeros(n_dof)
         np.add.at(Fs, self.ind, -grad_E)
         Js = np.zeros((n_dof, n_dof))
-        np.add.at(Js, (self.ind[:, :, None],
-                       self.ind[:, None, :]), -hess_E)
+        np.add.at(Js, (self.ind[:, :, None], self.ind[:, None, :]), -hess_E)
 
         return Fs, Js
 

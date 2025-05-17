@@ -1,3 +1,7 @@
+# # for debug
+# import debugpy
+
+
 import numpy as np
 from typing import List
 
@@ -269,6 +273,14 @@ class ShellContactEnergy(ContactEnergy):
         ratios_p = self.compute_barycentric_batch(p, min_p)
         ratios_q = self.compute_barycentric_batch(q, min_q)
 
+        # Snap near-zero and near-one values
+        eps = 1e-10
+        ratios_p[ratios_p < eps] = 0.0
+        ratios_p[ratios_p > 1.0 - eps] = 1.0
+
+        ratios_q[ratios_q < eps] = 0.0
+        ratios_q[ratios_q > 1.0 - eps] = 1.0
+
         # Handle intersecting cases
         intersecting = ~shown_disjoint
         min_dist_squared[intersecting] = 0.0
@@ -428,13 +440,16 @@ class ShellContactEnergy(ContactEnergy):
         # q[self.ind] is (B,18)
         q_tri = q.reshape(-1, 2, 3, 3)    # (B, 2, 3, 3)   
         dist_squared, cp, cq, ratios_p, ratios_q = self.distance_triangle_triangle_squared_batch(q_tri[:, 0], q_tri[:, 1])
-        print("dist_square: ", dist_squared)
+        # print("dist_square: ", dist_squared)
         
         reordered_ind, inv_mask, contact_types = self.reorder_triangle_pair_dof_indices_with_inverse_vectorized(
             ratios_p, ratios_q, self.pairs, self.ind
         )
-        print("reordered_ind: ", reordered_ind)
+        # print("reordered_ind: ", reordered_ind)
         print("contact_types: ", contact_types)
+
+        if "Unknown" in contact_types:
+            print("ratios: ", ratios_p, ratios_q)
           
         out = self._evalulate_piecewise(q, reordered_ind,contact_types, *fns, shape)
 
@@ -446,13 +461,22 @@ class ShellContactEnergy(ContactEnergy):
             out = np.take_along_axis(out, inv_mask[:, :, None], axis=1)
             out = np.take_along_axis(out, inv_mask[:, None, :], axis=2)
 
-        # print("out:")
-        # print(out)
         return out
 
     def _evalulate_piecewise(self, q, ind, contact_type, fn_p2p, fn_p2e, fn_e2e, fn_p2t, shape=(18,)):
         result = np.zeros((ind.shape[0],) + shape)
         contact_type = np.array(contact_type)
+
+        # if not debugpy.is_client_connected():
+        #     try:
+        #         debugpy.listen(5678)
+        #     except RuntimeError:
+        #         pass  # Already listening
+
+        #     print("Waiting for debugger attach...")
+        #     debugpy.wait_for_client()
+
+        # debugpy.breakpoint()
 
         # Masks based on contact_type string array
         mask_p2p = contact_type == "PointToPoint"
@@ -475,8 +499,6 @@ class ShellContactEnergy(ContactEnergy):
         if np.any(mask_p2p):
             args = get_inputs(mask_p2p)
             result[mask_p2p] = fn_p2p(*args)
-            # print("args: ", args)
-            # print(result)
 
         # Process p2e
         if np.any(mask_p2e):

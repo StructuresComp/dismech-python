@@ -80,6 +80,9 @@ class TimeStepper(metaclass=abc.ABCMeta):
                 viz.update(robot, i * robot.sim_params.dt)
             if robot.sim_params.log_data and i % robot.sim_params.log_step == 0:
                 ret.append(robot)
+
+            # print current time
+            print("current_time: ", i*robot.sim_params.dt)
         return ret
 
     def step(self, robot: SoftRobot = None, debug: bool = False) -> SoftRobot:

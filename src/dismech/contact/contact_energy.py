@@ -82,7 +82,8 @@ class ContactEnergy(metaclass=abc.ABCMeta):
         print("contact energy: ", E)
         return np.sum(E) if output_scalar else E
 
-    def grad_hess_energy(self, q):
+    def grad_hess_energy(self, state, robot, F, first_iter):
+        q = state.q
         q = q * self.scale
         Delta = self.get_Delta(q)
         grad_Delta, hess_Delta = self.get_grad_hess_Delta(q)
@@ -93,13 +94,12 @@ class ContactEnergy(metaclass=abc.ABCMeta):
         hess_E = hess_E_D[:, None, None] * np.einsum('ni,nj->nij', grad_Delta, grad_Delta)
         hess_E += grad_E_D[:, None, None] * hess_Delta
 
-        grad_E *= self.scale
-        hess_E *= self.scale ** 2
+        if first_iter:
+            self.k_c = self.get_contact_stiffness(robot, F)
+            print(self.k_c)
 
-        if np.any(grad_E):
-            print("NONZERO contact force/jacobian")
-            print("gradE is:", grad_E)
-            print("hessE is:", hess_E)
+        grad_E *= self.scale * self.k_c
+        hess_E *= self.scale ** 2 * self.k_c
 
         n_dof = q.shape[0]
 
@@ -109,6 +109,14 @@ class ContactEnergy(metaclass=abc.ABCMeta):
         np.add.at(Js, (self.ind[:, :, None], self.ind[:, None, :]), -hess_E)
 
         return Fs, Js
+    
+    def get_contact_stiffness(self, robot, F: np.ndarray):
+        if np.sum(np.abs(F)) < 1e-9:
+            return np.ones(self.pairs.shape[0]) * 100
+        valid_dofs = robot.map_node_to_dof(
+            self.pairs)
+        force_per_stencil = np.max(np.linalg.norm(F[valid_dofs], axis=2))
+        return force_per_stencil * 1e5
 
     @abc.abstractmethod
     def get_Delta(self, q):

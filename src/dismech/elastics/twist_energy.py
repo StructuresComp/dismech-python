@@ -20,11 +20,11 @@ class TwistEnergy(ElasticEnergy):
             self._sign_grad[:, dof_idx] = signs
         self._sign_hess = self._sign_grad[:, :, None] * \
             self._sign_grad[:, None, :]
-    
+
     @property
     def K(self):
         return self._springs.GJ / self._springs.voronoi_len
-            
+
     def _get_thetas(self, q: np.ndarray):
         return q[self._edges_ind[:, 0]] * self._sgn[:, 0], q[self._edges_ind[:, 1]] * self._sgn[:, 1]
 
@@ -34,7 +34,8 @@ class TwistEnergy(ElasticEnergy):
 
     def grad_hess_strain(self, state: RobotState) -> typing.Tuple[np.ndarray, np.ndarray]:
         n0p, n1p, n2p = self._get_node_pos(state.q)
-        N = n0p.shape[0]  # Number of springs in the batch
+
+        N = n0p.shape[0]  # Number of springs in the batch]
 
         # Edge vectors
         ee = n1p - n0p

@@ -446,10 +446,10 @@ class ShellContactEnergy(ContactEnergy):
             ratios_p, ratios_q, self.pairs, self.ind
         )
         # print("reordered_ind: ", reordered_ind)
-        print("contact_types: ", contact_types)
+        #print("contact_types: ", contact_types)
 
-        if "Unknown" in contact_types:
-            print("ratios: ", ratios_p, ratios_q)
+        #if "Unknown" in contact_types:
+        #    print("ratios: ", ratios_p, ratios_q)
           
         out = self._evalulate_piecewise(q, reordered_ind,contact_types, *fns, shape)
 

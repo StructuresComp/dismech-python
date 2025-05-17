@@ -48,10 +48,10 @@ class TimeStepper(metaclass=abc.ABCMeta):
             if not robot.sim_params.two_d_sim:   # if 3d
                 self.elastic_energies[TWIST] = TwistEnergy(
                     robot.twist_springs, robot.state)
-                
+
         if "selfContact" in robot.env.ext_force_list:
-            # self._contact_energy = IMCEnergy(robot.contact_pairs, robot.env.delta, robot.env.h)
-            self._contact_energy = ShellContactEnergy(robot.tri_contact_pairs, robot.env.delta, robot.env.h, None, True)
+            self._contact_energy = IMCEnergy(robot.contact_pairs, robot.env.delta, robot.env.h)
+            #self._contact_energy = ShellContactEnergy(robot.tri_contact_pairs, robot.env.delta, robot.env.h, None, True)
             # self._contact_energy = ShellContactEnergy(robot.tri_contact_pairs, robot.env.delta, robot.env.h, None, False)
 
         # Set solver
@@ -103,9 +103,15 @@ class TimeStepper(metaclass=abc.ABCMeta):
             q_eval = self._compute_evaluation_position(robot, q)
             u_eval = self._compute_evaluation_velocity(robot, q)
 
-            F, J = self._compute_forces_and_jacobian(robot, q_eval, u_eval)
+            F = np.zeros(q.shape[0])
 
-            # Inertial force vs equilibrium
+            if robot.sim_params.sparse:
+                J = sp.csr_matrix(
+                    (q.shape[0], q.shape[0]), dtype=np.float64)
+            else:
+                J = np.zeros((q.shape[0], q.shape[0]))
+
+
             if not robot.sim_params.static_sim:
                 inertial_force, inertial_jacobian = self._compute_inertial_force_and_jacobian(
                     robot, q)
@@ -115,6 +121,12 @@ class TimeStepper(metaclass=abc.ABCMeta):
                     J += sp.diags(inertial_jacobian, format='csr')
                 else:
                     J[ndof_diag, ndof_diag] += inertial_jacobian
+
+            F, J = self._compute_forces_and_jacobian(
+                F, J, robot, q_eval, u_eval, iteration == 1)
+
+            # Inertial force vs equilibrium
+            
 
             # Handle free DOF components
             f_free = F[robot.state.free_dof]
@@ -180,16 +192,9 @@ class TimeStepper(metaclass=abc.ABCMeta):
     def _compute_evaluation_velocity(self, robot: SoftRobot, q: np.ndarray) -> np.ndarray:
         return self._compute_velocity(robot, q)
 
-    def _compute_forces_and_jacobian(self, robot: SoftRobot, q, u):
+    def _compute_forces_and_jacobian(self, forces, jacobian, robot: SoftRobot, q, u, first_iter=True):
         """ Computes forces and jacobian as sum of external and internal forces. """
-        forces = np.zeros(q.shape[0])
-
-        if robot.sim_params.sparse:
-            jacobian = sp.csr_matrix(
-                (q.shape[0], q.shape[0]), dtype=np.float64)
-        else:
-            jacobian = np.zeros((q.shape[0], q.shape[0]))
-
+        
         # Compute reference frames and material directors
         a1_iter, a2_iter = robot.compute_time_parallel(
             robot.state.a1, robot.state.q, q)
@@ -216,10 +221,6 @@ class TimeStepper(metaclass=abc.ABCMeta):
             F, J, = compute_aerodynamic_forces_vectorized(robot, q, u)
             forces -= F
             jacobian -= J  # FIXME: Sparse option
-        if "selfContact" in robot.env.ext_force_list:
-            F, J = self._contact_energy.grad_hess_energy(q)
-            forces -= F
-            jacobian -= J
         if "floorContact" in robot.env.ext_force_list:
             if "floorFriction" in robot.env.ext_force_list:
                 F, J = compute_ground_contact_friction(robot, q, u)
@@ -231,7 +232,12 @@ class TimeStepper(metaclass=abc.ABCMeta):
             F, J = compute_rft(robot, q, u)
             forces -= F
             jacobian -= J
-        
+        if "selfContact" in robot.env.ext_force_list:
+            F, J = self._contact_energy.grad_hess_energy(new_state, robot, forces, first_iter)
+            #F, J = self._contact_energy.grad_hess_energy(q)
+            forces -= F
+            jacobian -= J
+
         return forces, jacobian
 
     def _converged(self,
@@ -268,7 +274,12 @@ class TimeStepper(metaclass=abc.ABCMeta):
             # Evaluate at same point as outer step
             q_eval = self._compute_evaluation_position(robot, q_new)
             u_eval = self._compute_evaluation_velocity(robot, q_new)
-            F_new, _ = self._compute_forces_and_jacobian(robot, q_eval, u_eval)
+            if robot.sim_params.sparse:
+                J = sp.csr_matrix(
+                    (q.shape[0], q.shape[0]), dtype=np.float64)
+            else:
+                J = np.zeros((q.shape[0], q.shape[0]))
+            F_new, _ = self._compute_forces_and_jacobian(F, J, robot, q_eval, u_eval)
 
             lhs = 0.5 * np.linalg.norm(F_new) ** 2 - \
                 0.5 * np.linalg.norm(F) ** 2

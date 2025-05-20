@@ -36,8 +36,9 @@ def compute_energy_grad_hess(Delta, delta, h, k_1):
 
 class ContactEnergy(metaclass=abc.ABCMeta):
 
-    def __init__(self, pairs: List[ContactPair], delta: float, h: float, k_1: float, scale: bool = True):
+    def __init__(self, pairs: List[ContactPair], delta: float, h: float, k_1: float, stiffness: float, scale: bool = True):
         self.pairs = np.vstack([p.pair_nodes for p in pairs])
+        self.k_c = stiffness
         self.ind = np.vstack([p.ind for p in pairs])
         if scale:
             self.scale = 1.0 / h
@@ -58,6 +59,7 @@ class ContactEnergy(metaclass=abc.ABCMeta):
         print("h:", self.norm_h)
         print("K1:", self.norm_k_1)
         print("scale: ", self.scale)
+        print("kc: ", self.k_c)
 
         print("upper limit for quadratic:", 2 * self.norm_h - self.norm_delta)
         print("upper limit for smooth:", 2 * self.norm_h + self.norm_delta)
@@ -94,9 +96,9 @@ class ContactEnergy(metaclass=abc.ABCMeta):
         hess_E = hess_E_D[:, None, None] * np.einsum('ni,nj->nij', grad_Delta, grad_Delta)
         hess_E += grad_E_D[:, None, None] * hess_Delta
 
-        if first_iter:
-            self.k_c = self.get_contact_stiffness(robot, F)
-            print(self.k_c)
+        #if first_iter:
+        #    self.k_c = self.get_contact_stiffness(robot, F)
+        #    print(self.k_c)
 
         grad_E *= self.scale * self.k_c
         hess_E *= self.scale ** 2 * self.k_c

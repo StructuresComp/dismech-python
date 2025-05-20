@@ -12,10 +12,10 @@ from .imc_helper import get_lambda_fns_shell, delta_p_to_p_shell, delta_p_to_e_s
 
 class ShellContactEnergy(ContactEnergy):
 
-    def __init__(self, pairs: List[ContactPair], delta: float, h: float, k_1: float = None, scale=True):
+    def __init__(self, pairs: List[ContactPair], delta: float, h: float, kc: float, k_1: float = None, scale=True):
         if k_1 is None:
             k_1 = 15 / delta
-        super().__init__(pairs, delta, h, k_1, scale)
+        super().__init__(pairs, delta, h, k_1, kc, scale)
         self.__pp_fn, self.__grad_pp_fn, self.__hess_pp_fn = get_lambda_fns_shell(
             delta_p_to_p_shell)
         self.__pe_fn, self.__grad_pe_fn, self.__hess_pe_fn = get_lambda_fns_shell(

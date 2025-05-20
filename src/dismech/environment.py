@@ -21,6 +21,7 @@ class Environment:
         elif key == 'selfContact':
             self.delta = kwargs['delta']
             self.h = kwargs['h']
+            self.imc_stiffness = kwargs['kc']
         elif key == 'selfFriction':
             pass
         elif key == 'floorContact':

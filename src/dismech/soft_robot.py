@@ -37,7 +37,7 @@ class SoftRobot:
             np.concatenate((geo.rod_edges, geo.rod_shell_joint_edges)
                            ) if geo.rod_shell_joint_edges.size else geo.rod_edges
         )
-        self.__triangle_combos = construct_triangle_combinations(geo.face_edges)
+        self.__triangle_combos = construct_triangle_combinations(geo.face_nodes)
 
         self.__contact_pairs = [ContactPair(
             e, self.map_node_to_dof) for e in self.__edge_combos]

@@ -438,7 +438,7 @@ class ShellContactEnergy(ContactEnergy):
 
     def _evaluate_symbolic(self, q, fns, shape):
         # q[self.ind] is (B,18)
-        q_tri = q.reshape(-1, 2, 3, 3)    # (B, 2, 3, 3)   
+        q_tri = q[self.ind].reshape(-1, 2, 3, 3)    # (B, 2, 3, 3)   
         dist_squared, cp, cq, ratios_p, ratios_q = self.distance_triangle_triangle_squared_batch(q_tri[:, 0], q_tri[:, 1])
         # print("dist_square: ", dist_squared)
         
@@ -510,9 +510,9 @@ class ShellContactEnergy(ContactEnergy):
             args = get_inputs(mask_e2e)
             result[mask_e2e] = fn_e2e(*args)
 
-            # Process e2e
+        # Process p2t
         if np.any(mask_p2t):
             args = get_inputs(mask_p2t)
-            result[mask_e2e] = fn_p2t(*args)
+            result[mask_p2t] = fn_p2t(*args)
 
         return result

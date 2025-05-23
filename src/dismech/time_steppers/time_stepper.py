@@ -8,7 +8,7 @@ import numpy as np
 from ..soft_robot import SoftRobot
 from ..state import RobotState
 from ..elastics import ElasticEnergy, StretchEnergy, HingeEnergy, BendEnergy, TriangleEnergy, TwistEnergy
-from ..external_forces import compute_gravity_forces, compute_aerodynamic_forces_vectorized, compute_ground_contact, compute_ground_contact_friction, compute_rft
+from ..external_forces import compute_gravity_forces, compute_aerodynamic_forces_vectorized, compute_ground_contact, compute_ground_contact_friction, compute_rft, compute_viscous_force, compute_surface_viscous_drag, compute_thrust_force_and_jacobian
 from ..solvers import Solver, NumpySolver, PardisoSolver
 from ..visualizer import Visualizer
 from ..contact import IMCEnergy, ShellContactEnergy
@@ -82,7 +82,7 @@ class TimeStepper(metaclass=abc.ABCMeta):
                 ret.append(robot)
 
             # print current time
-            #print("current_time: ", i*robot.sim_params.dt)
+            print("current_time: ", i*robot.sim_params.dt)
         return ret
 
     def step(self, robot: SoftRobot = None, debug: bool = False) -> SoftRobot:
@@ -221,6 +221,18 @@ class TimeStepper(metaclass=abc.ABCMeta):
             F, J, = compute_aerodynamic_forces_vectorized(robot, q, u)
             forces -= F
             jacobian -= J  # FIXME: Sparse option
+        if "viscous" in robot.env.ext_force_list:
+            F, J, = compute_viscous_force(robot, q, u)
+            forces -= F
+            jacobian -= J  # FIXME: Sparse option
+        if "hydrodynamics" in robot.env.ext_force_list:
+            F, J, = compute_surface_viscous_drag(robot, q, u)
+            forces -= F
+            jacobian -= J  # FIXME: Sparse option
+        if "thrust" in robot.env.ext_force_list:
+            F, J, = compute_thrust_force_and_jacobian(robot, q, u)
+            forces -= F
+            jacobian -= J  # FIXME: Sparse option
         if "floorContact" in robot.env.ext_force_list:
             if "floorFriction" in robot.env.ext_force_list:
                 F, J = compute_ground_contact_friction(robot, q, u)
@@ -228,7 +240,7 @@ class TimeStepper(metaclass=abc.ABCMeta):
                 F, J = compute_ground_contact(robot, q)
             forces -= F
             jacobian -= J
-        if "viscous" in robot.env.ext_force_list:
+        if "rft" in robot.env.ext_force_list:
             F, J = compute_rft(robot, q, u)
             forces -= F
             jacobian -= J

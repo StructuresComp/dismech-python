@@ -571,6 +571,11 @@ class SoftRobot:
     def ref_len(self) -> np.ndarray:
         """Reference lengths for all edges (n_edges,)"""
         return self.__ref_len.view()
+    
+    @property
+    def voronoi_ref_len(self) -> np.ndarray:
+        """Reference lengths for all edges (n_edges,)"""
+        return self.__voronoi_ref_len.view()
 
     @property
     def voronoi_area(self) -> np.ndarray:

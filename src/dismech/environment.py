@@ -8,12 +8,19 @@ class Environment:
             self.g = kwargs['g']
         elif key == 'buoyancy':
             self.rho = kwargs['rho']
-        elif key == 'viscous':
+        elif key == 'rft':
             self.ct = kwargs['ct']
             self.cn = kwargs['cn']
+        elif key == 'viscous':
+            self.eta = kwargs['eta']
+        elif key == 'hydrodynamics':
+            self.rho = kwargs['rho']    # REUSING
+            self.cd = kwargs['cd']
         elif key == 'aerodynamics':
             self.rho = kwargs['rho']    # REUSING
             self.cd = kwargs['cd']
+        elif key == 'thrust':
+            self.thrust_coeff = kwargs['thrust_coeff']
         elif key == 'pointForce':
             self.pt_force = kwargs['pt_force']
             self.pt_force_node = kwargs['pt_force_node']

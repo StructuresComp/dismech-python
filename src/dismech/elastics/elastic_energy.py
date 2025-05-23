@@ -72,6 +72,15 @@ class ElasticEnergy(metaclass=PostInitABCMeta):
         return np.sum(energy) if output_scalar else energy
 
     def grad_hess_energy_linear_elastic(self, state: RobotState, sparse: bool = False) -> typing.Tuple[np.ndarray, np.ndarray] | typing.Tuple[np.ndarray, sp.csr_array]:
+        
+        # theta = self.get_strain(state)
+        # theta_nat = self._springs.nat_strain
+        # theta_inc = self._springs.inc_strain
+        # theta_bar = theta_nat + theta_inc
+        # del_theta = theta - theta_bar
+
+        # print("theta - theta_bar (Δθ) min/max: ", np.min(del_theta), np.max(del_theta))
+        
         del_strain = self._get_del_strain(state)
         grad_strain, hess_strain = self.grad_hess_strain(state)
 

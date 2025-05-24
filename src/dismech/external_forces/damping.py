@@ -4,11 +4,11 @@ import numpy as np
 
 from ..soft_robot import SoftRobot
 
-def compute_viscous_force(robot: SoftRobot, q: np.ndarray, u: np.ndarray) -> typing.Tuple[np.ndarray, typing.Union[np.ndarray, sp.csr_matrix]]:
+def compute_damping_force(robot: SoftRobot, q: np.ndarray, u: np.ndarray) -> typing.Tuple[np.ndarray, typing.Union[np.ndarray, sp.csr_matrix]]:
     """
     Compute linear viscous damping forces and Jacobian.
-    F = -η * volume * velocity
-    J = -η * volume / dt * Identity
+    F = -η * velocity
+    J = -η * 1 / dt * Identity
 
     Parameters
     ----------
@@ -27,9 +27,9 @@ def compute_viscous_force(robot: SoftRobot, q: np.ndarray, u: np.ndarray) -> typ
 
     Returns
     -------
-    Fv : (n_dof,) array
+    Fd : (n_dof,) array
         Damping force.
-    Jv : (n_dof, n_dof) array or sparse csr_matrix
+    Jd : (n_dof, n_dof) array or sparse csr_matrix
         Damping Jacobian.
     """
     dt = robot.sim_params.dt
@@ -38,7 +38,7 @@ def compute_viscous_force(robot: SoftRobot, q: np.ndarray, u: np.ndarray) -> typ
     n_dof = robot.n_dof
 
     # Per-node Voronoi weights (each node has 3 DOFs)
-    # vlen = robot.voronoi_ref_len  # shape (n_nodes,)
+    # vlen = robot.voronoi_ref_len_all  # shape (n_nodes,)
     # eta_v = eta * vlen            # shape (n_nodes,)
     eta_v = eta * np.ones((n_nodes, 1))
     eta_dof = np.repeat(eta_v, 3)  # shape (3 * n_nodes,) per DOF
@@ -48,19 +48,16 @@ def compute_viscous_force(robot: SoftRobot, q: np.ndarray, u: np.ndarray) -> typ
     flat_dof_indices = node_dof_indices.reshape(-1)
 
     # Force
-    Fv = np.zeros(n_dof)
-    Fv[flat_dof_indices] = -eta_dof * u[flat_dof_indices]
+    Fd = np.zeros(n_dof)
+    Fd[flat_dof_indices] = -eta_dof * u[flat_dof_indices]
 
     # Jacobian
     if robot.sim_params.sparse:
         J_diag = -eta_dof / dt
-        Jv = sp.diags((J_diag,), [0], shape=(n_dof, n_dof), format="csr")
+        Jd = sp.diags((J_diag,), [0], shape=(n_dof, n_dof), format="csr")
     else:
-        Jv = np.zeros((n_dof, n_dof))
+        Jd = np.zeros((n_dof, n_dof))
         J_diag = -eta_dof / dt
-        Jv[flat_dof_indices, flat_dof_indices] = J_diag
+        Jd[flat_dof_indices, flat_dof_indices] = J_diag
 
-    print("viscous force", Fv)
-    print("viscous jacob", Jv)
-
-    return Fv, Jv
+    return Fd, Jd

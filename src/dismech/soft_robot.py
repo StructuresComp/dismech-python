@@ -84,6 +84,7 @@ class SoftRobot:
 
         self.__ref_len = self._get_ref_len()
         self.__voronoi_ref_len = self._get_voronoi_ref_len()
+        self.__voronoi_ref_len_all = self._get_voronoi_ref_len_all()
         self.__voronoi_area = self._get_voronoi_area()
         self.__face_area = self._get_face_area()
 
@@ -223,6 +224,15 @@ class SoftRobot:
         edges = self.__edges[:self.__n_edges_dof]
         n_nodes = self.__n_nodes
         weights = 0.5 * self.__ref_len[:self.__n_edges_dof]
+        contributions = np.zeros(n_nodes)
+        np.add.at(contributions, edges[:, 0], weights)
+        np.add.at(contributions, edges[:, 1], weights)
+        return contributions
+    
+    def _get_voronoi_ref_len_all(self) -> np.ndarray:
+        edges = self.__edges
+        n_nodes = self.__n_nodes
+        weights = 0.5 * self.__ref_len
         contributions = np.zeros(n_nodes)
         np.add.at(contributions, edges[:, 0], weights)
         np.add.at(contributions, edges[:, 1], weights)
@@ -576,6 +586,11 @@ class SoftRobot:
     def voronoi_ref_len(self) -> np.ndarray:
         """Reference lengths for all edges (n_edges,)"""
         return self.__voronoi_ref_len.view()
+    
+    @property
+    def voronoi_ref_len_all(self) -> np.ndarray:
+        """Reference lengths for all edges (n_edges,)"""
+        return self.__voronoi_ref_len_all.view()
 
     @property
     def voronoi_area(self) -> np.ndarray:

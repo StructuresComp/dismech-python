@@ -8,7 +8,7 @@ import numpy as np
 from ..soft_robot import SoftRobot
 from ..state import RobotState
 from ..elastics import ElasticEnergy, StretchEnergy, HingeEnergy, BendEnergy, TriangleEnergy, TwistEnergy
-from ..external_forces import compute_gravity_forces, compute_aerodynamic_forces_vectorized, compute_ground_contact, compute_ground_contact_friction, compute_rft, compute_viscous_force, compute_surface_viscous_drag, compute_thrust_force_and_jacobian
+from ..external_forces import compute_gravity_forces, compute_aerodynamic_forces_vectorized, compute_ground_contact, compute_ground_contact_friction, compute_rft, compute_damping_force, compute_surface_viscous_drag, compute_thrust_force_and_jacobian
 from ..solvers import Solver, NumpySolver, PardisoSolver
 from ..visualizer import Visualizer
 from ..contact import IMCEnergy, ShellContactEnergy
@@ -221,8 +221,8 @@ class TimeStepper(metaclass=abc.ABCMeta):
             F, J, = compute_aerodynamic_forces_vectorized(robot, q, u)
             forces -= F
             jacobian -= J  # FIXME: Sparse option
-        if "viscous" in robot.env.ext_force_list:
-            F, J, = compute_viscous_force(robot, q, u)
+        if "damping" in robot.env.ext_force_list:
+            F, J, = compute_damping_force(robot, q, u)
             forces -= F
             jacobian -= J  # FIXME: Sparse option
         if "hydrodynamics" in robot.env.ext_force_list:

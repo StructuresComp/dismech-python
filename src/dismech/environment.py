@@ -11,7 +11,7 @@ class Environment:
         elif key == 'rft':
             self.ct = kwargs['ct']
             self.cn = kwargs['cn']
-        elif key == 'viscous':
+        elif key == 'damping':
             self.eta = kwargs['eta']
         elif key == 'hydrodynamics':
             self.rho = kwargs['rho']    # REUSING

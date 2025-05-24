@@ -2,6 +2,6 @@ from .aerodynamics import compute_aerodynamic_forces, compute_aerodynamic_forces
 from .gravity import compute_gravity_forces
 from .ground_contact import compute_ground_contact, compute_ground_contact_friction
 from .rft import compute_rft
-from .viscous import compute_viscous_force
+from .damping import compute_damping_force
 from .hydrodynamics import compute_surface_viscous_drag
 from .thrust import compute_thrust_force_and_jacobian

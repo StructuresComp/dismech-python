@@ -446,7 +446,8 @@ class ShellContactEnergy(ContactEnergy):
             ratios_p, ratios_q, self.pairs, self.ind
         )
         # print("reordered_ind: ", reordered_ind)
-        #print("contact_types: ", contact_types)
+        # print("contact_types: ", contact_types)
+        # print("inv_mask: ", inv_mask)
 
         #if "Unknown" in contact_types:
         #    print("ratios: ", ratios_p, ratios_q)
@@ -454,7 +455,6 @@ class ShellContactEnergy(ContactEnergy):
         out = self._evalulate_piecewise(q, reordered_ind,contact_types, *fns, shape)
 
         # Restore original order
-        # print("inv mask: ", inv_mask)
         if out.ndim == 2:
             out = np.take_along_axis(out, inv_mask, axis=1)
         elif out.ndim == 3:

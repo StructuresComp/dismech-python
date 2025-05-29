@@ -205,7 +205,7 @@ def construct_triangle_combinations(triangles: np.ndarray) -> np.ndarray:
     shared_node_mask = np.array([
         len(set(triangles[a]) & set(triangles[b])) > 0
         for a, b in zip(i, j)
-    ])
+    ], dtype=bool)
 
     valid = np.column_stack((i[~shared_node_mask], j[~shared_node_mask])) # Invert mask to get pairs with no shared nodes
 

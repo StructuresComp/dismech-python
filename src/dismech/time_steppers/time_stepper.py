@@ -144,10 +144,11 @@ class TimeStepper(metaclass=abc.ABCMeta):
                 dq_free = self._solver.solve(j_free, f_free)
 
             # Adaptive damping and update
-            if robot.sim_params.use_line_search:
-                alpha = self._line_search(robot, q, dq_free, f_free, j_free)
-            else:
-                alpha = self._adaptive_damping(alpha, iteration)
+            if iteration > robot.sim_params.line_search_iters:
+                if robot.sim_params.use_line_search:
+                    alpha = self._line_search(robot, q, dq_free, f_free, j_free)
+                else:
+                    alpha = self._adaptive_damping(alpha, iteration)
             dq_free *= alpha
             q[robot.state.free_dof] -= dq_free
 
@@ -192,7 +193,7 @@ class TimeStepper(metaclass=abc.ABCMeta):
     def _compute_evaluation_velocity(self, robot: SoftRobot, q: np.ndarray) -> np.ndarray:
         return self._compute_velocity(robot, q)
 
-    def _compute_forces_and_jacobian(self, forces, jacobian, robot: SoftRobot, q, u, first_iter=True):
+    def _compute_forces_and_jacobian(self, forces, jacobian, robot: SoftRobot, q, u, first_iter=False):
         """ Computes forces and jacobian as sum of external and internal forces. """
         
         # Compute reference frames and material directors
@@ -274,11 +275,17 @@ class TimeStepper(metaclass=abc.ABCMeta):
 
         return max(alpha * 0.9, 0.1)
 
-    def _line_search(self, robot, q, dq, F, J, m1=0.1, m2=0.9, alpha_low=0.0, alpha_high=1.0, max_iter=10):
+    def _line_search(self, robot, q, dq, F, J, m1=0.1, m2=0.9, alpha_low=0.0, alpha_high=1.0):
         d0 = np.dot(F, J @ dq)
         alpha = alpha_high
+        alpha_max = 2
+        alpha_min = 1e-3
+        success = False
         iteration = 0
-        while iteration < max_iter:
+        # Preallocate matrices
+        ndof_diag = np.arange(q.shape[0])
+
+        while not(success):
             # Construct full dq matrix
             dq_full = np.zeros_like(q)
             dq_full[robot.state.free_dof] = dq
@@ -287,25 +294,47 @@ class TimeStepper(metaclass=abc.ABCMeta):
             # Evaluate at same point as outer step
             q_eval = self._compute_evaluation_position(robot, q_new)
             u_eval = self._compute_evaluation_velocity(robot, q_new)
+
+            F_iter = np.zeros(q.shape[0])
+            
             if robot.sim_params.sparse:
-                J = sp.csr_matrix(
+                J_iter = sp.csr_matrix(
                     (q.shape[0], q.shape[0]), dtype=np.float64)
             else:
-                J = np.zeros((q.shape[0], q.shape[0]))
-            F_new, _ = self._compute_forces_and_jacobian(F, J, robot, q_eval, u_eval)
+                J_iter = np.zeros((q.shape[0], q.shape[0]))
 
-            lhs = 0.5 * np.linalg.norm(F_new) ** 2 - \
+            if not robot.sim_params.static_sim:
+                inertial_force, inertial_jacobian = self._compute_inertial_force_and_jacobian(
+                    robot, q_new)
+                F_iter += inertial_force
+
+                if robot.sim_params.sparse:
+                    J_iter += sp.diags(inertial_jacobian, format='csr')
+                else:
+                    J_iter[ndof_diag, ndof_diag] += inertial_jacobian
+
+            F_new, _ = self._compute_forces_and_jacobian(F_iter, J_iter, robot, q_eval, u_eval)
+
+            lhs = 0.5 * np.linalg.norm(F_new[robot.state.free_dof]) ** 2 - \
                 0.5 * np.linalg.norm(F) ** 2
             rhs_low = alpha * m2 * d0
             rhs_high = alpha * m1 * d0
 
             if rhs_low <= lhs <= rhs_high:
-                return alpha
+                # return alpha
+                success = True
             elif lhs < rhs_low:
                 alpha_low = alpha
             else:
                 alpha_high = alpha
-            alpha = 0.5 * (alpha_low + alpha_high)
+
+            if alpha_high < alpha_max :
+                alpha = 0.5 * (alpha_low + alpha_high)
+            else:
+                alpha = 10 * alpha
+            
+            if (alpha < alpha_min) or (alpha > alpha_max) or (iteration > 100) :
+                break
             iteration += 1
         return alpha
 

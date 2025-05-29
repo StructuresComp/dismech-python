@@ -15,6 +15,11 @@ def compute_energy_grad_hess(Delta, delta, h, k_1):
     mask1 = (Delta > 0) & (Delta <= 2 * h - delta)
     mask2 = (Delta > 2 * h - delta) & (Delta < 2 * h + delta)
 
+    print("mask1: ", mask1)
+    print("mask2: ", mask2)
+    print("2h-delta: ", 2 * h - delta)
+    print("2h-delta: ", 2 * h + delta)
+
     # Quadratic region
     E[mask1] = (2 * h - Delta[mask1]) ** 2
     grad_E[mask1] = -2 * (2 * h - Delta[mask1])
@@ -79,9 +84,11 @@ class ContactEnergy(metaclass=abc.ABCMeta):
         #     self.__expr, Delta, Delta), modules='numpy')
 
     def get_energy(self, q, output_scalar: bool = True):
+        q = q * self.scale
         Delta = self.get_Delta(q)
         E, _, _ = compute_energy_grad_hess(Delta, self.norm_delta, self.norm_h, self.norm_k_1)
         print("contact energy: ", E)
+        print("Delta:", Delta)
         return np.sum(E) if output_scalar else E
 
     def grad_hess_energy(self, state, robot, F, first_iter):
@@ -92,6 +99,10 @@ class ContactEnergy(metaclass=abc.ABCMeta):
 
         E, grad_E_D, hess_E_D = compute_energy_grad_hess(Delta, self.norm_delta, self.norm_h, self.norm_k_1)
 
+        # debug:
+        print("Delta:", Delta)
+        print("grad_E_D:", grad_E_D)
+
         grad_E = grad_Delta * grad_E_D[:, None]
         hess_E = hess_E_D[:, None, None] * np.einsum('ni,nj->nij', grad_Delta, grad_Delta)
         hess_E += grad_E_D[:, None, None] * hess_Delta
@@ -99,6 +110,8 @@ class ContactEnergy(metaclass=abc.ABCMeta):
         #if first_iter:
         #    self.k_c = self.get_contact_stiffness(robot, F)
         #    print(self.k_c)
+
+        print("gradE: ", grad_E)
 
         grad_E *= self.scale * self.k_c
         hess_E *= self.scale ** 2 * self.k_c
@@ -110,6 +123,7 @@ class ContactEnergy(metaclass=abc.ABCMeta):
         Js = np.zeros((n_dof, n_dof))
         np.add.at(Js, (self.ind[:, :, None], self.ind[:, None, :]), -hess_E)
 
+        # return Fs, Js
         return Fs, Js
     
     def get_contact_stiffness(self, robot, F: np.ndarray):

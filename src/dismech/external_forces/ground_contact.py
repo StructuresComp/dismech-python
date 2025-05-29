@@ -12,6 +12,8 @@ def compute_ground_contact(robot: SoftRobot, q: np.ndarray, as_raw=False) -> typ
     z_indices = np.arange(2, robot.end_node_dof_index, 3)
     dist = q[z_indices] - robot.env.ground_h - robot.env.ground_z
 
+    # print("dist is: ", dist)
+
     # Create mask for nodes close enough to the ground
     active_mask = (dist <= robot.env.ground_delta)
     active_indices = z_indices[active_mask]

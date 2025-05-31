@@ -15,11 +15,6 @@ def compute_energy_grad_hess(Delta, delta, h, k_1):
     mask1 = (Delta > 0) & (Delta <= 2 * h - delta)
     mask2 = (Delta > 2 * h - delta) & (Delta < 2 * h + delta)
 
-    print("mask1: ", mask1)
-    print("mask2: ", mask2)
-    print("2h-delta: ", 2 * h - delta)
-    print("2h-delta: ", 2 * h + delta)
-
     # Quadratic region
     E[mask1] = (2 * h - Delta[mask1]) ** 2
     grad_E[mask1] = -2 * (2 * h - Delta[mask1])
@@ -31,11 +26,11 @@ def compute_energy_grad_hess(Delta, delta, h, k_1):
     denom = 1 + exp_term
 
     E[mask2] = (1 / k_1 * log_term) ** 2
-    grad_E[mask2] = -2 * (1 / k_1 * log_term) * (k_1 * exp_term / denom)
+    grad_E[mask2] = -2 * (1 / k_1 * log_term) * (exp_term / denom)
     hess_E[mask2] = (
-        2 * exp_term / (k_1 * denom ** 2) *
-        (log_term - (k_1 * exp_term / denom))
-    )
+        2 * exp_term / (denom ** 2) *
+        (log_term + exp_term)
+    ) # corrected
 
     return E, grad_E, hess_E
 
@@ -87,8 +82,6 @@ class ContactEnergy(metaclass=abc.ABCMeta):
         q = q * self.scale
         Delta = self.get_Delta(q)
         E, _, _ = compute_energy_grad_hess(Delta, self.norm_delta, self.norm_h, self.norm_k_1)
-        print("contact energy: ", E)
-        print("Delta:", Delta)
         return np.sum(E) if output_scalar else E
 
     def grad_hess_energy(self, state, robot, F, first_iter):
@@ -99,10 +92,6 @@ class ContactEnergy(metaclass=abc.ABCMeta):
 
         E, grad_E_D, hess_E_D = compute_energy_grad_hess(Delta, self.norm_delta, self.norm_h, self.norm_k_1)
 
-        # debug:
-        print("Delta:", Delta)
-        print("grad_E_D:", grad_E_D)
-
         grad_E = grad_Delta * grad_E_D[:, None]
         hess_E = hess_E_D[:, None, None] * np.einsum('ni,nj->nij', grad_Delta, grad_Delta)
         hess_E += grad_E_D[:, None, None] * hess_Delta
@@ -110,8 +99,6 @@ class ContactEnergy(metaclass=abc.ABCMeta):
         #if first_iter:
         #    self.k_c = self.get_contact_stiffness(robot, F)
         #    print(self.k_c)
-
-        print("gradE: ", grad_E)
 
         grad_E *= self.scale * self.k_c
         hess_E *= self.scale ** 2 * self.k_c

@@ -37,9 +37,9 @@ def compute_energy_grad_hess(Delta, delta, h, k_1):
 class ContactEnergy(metaclass=abc.ABCMeta):
 
     def __init__(self, pairs: List[ContactPair], delta: float, h: float, k_1: float, stiffness: float, scale: bool = True):
-        self.pairs = np.vstack([p.pair_nodes for p in pairs])
+        self._pairs = np.vstack([p.pair_nodes for p in pairs])
         self.k_c = stiffness
-        self.ind = np.vstack([p.ind for p in pairs])
+        self._ind = np.vstack([p.ind for p in pairs])   # total inds, mask during first iter
         if scale:
             self.scale = 1.0 / h
         else:
@@ -79,6 +79,9 @@ class ContactEnergy(metaclass=abc.ABCMeta):
         #     self.__expr, Delta, Delta), modules='numpy')
 
     def get_energy(self, q, output_scalar: bool = True):
+        # Always check all indices
+        self.ind = self._ind
+        self.pairs = self._pairs
         q = q * self.scale
         Delta = self.get_Delta(q)
         E, _, _ = compute_energy_grad_hess(Delta, self.norm_delta, self.norm_h, self.norm_k_1)
@@ -87,6 +90,18 @@ class ContactEnergy(metaclass=abc.ABCMeta):
     def grad_hess_energy(self, state, robot, F, first_iter):
         q = state.q
         q = q * self.scale
+
+        if first_iter:
+            self.ind = self._ind
+            self.pairs = self._pairs
+            first_Delta = self.get_Delta(q)
+            self.ind = self._ind[first_Delta < 2 * self.norm_h + self.norm_delta * 10]
+            self.pairs = self._pairs[first_Delta < 2 * self.norm_h + self.norm_delta * 10]
+
+        if self.ind.size == 0:
+            n_dof = q.shape[0]
+            return np.zeros(n_dof), np.zeros((n_dof, n_dof))
+
         Delta = self.get_Delta(q)
         grad_Delta, hess_Delta = self.get_grad_hess_Delta(q)
 
@@ -96,9 +111,7 @@ class ContactEnergy(metaclass=abc.ABCMeta):
         hess_E = hess_E_D[:, None, None] * np.einsum('ni,nj->nij', grad_Delta, grad_Delta)
         hess_E += grad_E_D[:, None, None] * hess_Delta
 
-        #if first_iter:
-        #    self.k_c = self.get_contact_stiffness(robot, F)
-        #    print(self.k_c)
+        
 
         grad_E *= self.scale * self.k_c
         hess_E *= self.scale ** 2 * self.k_c

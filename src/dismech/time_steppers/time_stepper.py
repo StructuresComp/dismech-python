@@ -50,7 +50,7 @@ class TimeStepper(metaclass=abc.ABCMeta):
                     robot.twist_springs, robot.state)
 
         if "selfContact" in robot.env.ext_force_list:
-            # self._contact_energy = IMCEnergy(robot.contact_pairs, robot.env.delta, robot.env.h, robot.env.imc_stiffness)
+            #self._contact_energy = IMCEnergy(robot.contact_pairs, robot.env.delta, robot.env.h, robot.env.imc_stiffness)
             self._contact_energy = ShellContactEnergy(robot.tri_contact_pairs, robot.env.delta, robot.env.h, robot.env.imc_stiffness, None, True)
             # self._contact_energy = ShellContactEnergy(robot.tri_contact_pairs, robot.env.delta, robot.env.h, None, False)
 

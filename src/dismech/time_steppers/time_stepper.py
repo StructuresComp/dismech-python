@@ -146,9 +146,13 @@ class TimeStepper(metaclass=abc.ABCMeta):
             # Adaptive damping and update
             if iteration > robot.sim_params.line_search_iters:
                 if robot.sim_params.use_line_search:
+                    alpha_orig = alpha
                     alpha = self._line_search(robot, q, dq_free, f_free, j_free)
+
+                    if alpha<=0.0:
+                        alpha = self._adaptive_damping(alpha_orig)
                 else:
-                    alpha = self._adaptive_damping(alpha, iteration)
+                    alpha = self._adaptive_damping(alpha)
             dq_free *= alpha
             q[robot.state.free_dof] -= dq_free
 
@@ -269,74 +273,81 @@ class TimeStepper(metaclass=abc.ABCMeta):
 
         return any([force_converged, relative_converged, disp_converged, iteration_limit])
 
-    def _adaptive_damping(self, alpha, iteration):
-        if iteration < 10:
-            return 1.0
-
+    def _adaptive_damping(self, alpha):
+        """ Adaptive damping based on the current alpha value. """
         return max(alpha * 0.9, 0.1)
 
     def _line_search(self, robot, q, dq, F, J, m1=0.1, m2=0.9, alpha_low=0.0, alpha_high=1.0):
-        d0 = np.dot(F, J @ dq)
-        alpha = alpha_high
-        alpha_max = 2
-        alpha_min = 1e-3
-        success = False
-        iteration = 0
-        # Preallocate matrices
-        ndof_diag = np.arange(q.shape[0])
+        assert F.shape[0] == len(robot.state.free_dof), "F must be reduced to free DOFs"
+        d0 = -np.dot(F, J @ dq)  # Directional derivative (should be negative)
 
-        while not(success):
-            # Construct full dq matrix
+        if d0 >= 0:
+            # Not a descent direction, don't take any step
+            return 0.0
+
+        alpha = alpha_high
+        alpha_min = 1e-6
+        alpha_max = 2.0
+        max_iter = 100
+        tol = 1e-6
+        iteration = 0
+        success = False
+
+        ndof = q.shape[0]
+        free_dof = robot.state.free_dof
+
+        while not success:
+            # Build full dq vector
             dq_full = np.zeros_like(q)
-            dq_full[robot.state.free_dof] = dq
+            dq_full[free_dof] = dq
             q_new = q - alpha * dq_full
 
-            # Evaluate at same point as outer step
+            # Compute updated state
             q_eval = self._compute_evaluation_position(robot, q_new)
             u_eval = self._compute_evaluation_velocity(robot, q_new)
 
-            F_iter = np.zeros(q.shape[0])
-            
+            # Recompute force at new configuration
+            F_iter = np.zeros_like(q)
             if robot.sim_params.sparse:
-                J_iter = sp.csr_matrix(
-                    (q.shape[0], q.shape[0]), dtype=np.float64)
+                J_iter = sp.csr_matrix((ndof, ndof), dtype=np.float64)
             else:
-                J_iter = np.zeros((q.shape[0], q.shape[0]))
+                J_iter = np.zeros((ndof, ndof))
 
             if not robot.sim_params.static_sim:
-                inertial_force, inertial_jacobian = self._compute_inertial_force_and_jacobian(
-                    robot, q_new)
+                inertial_force, _ = self._compute_inertial_force_and_jacobian(robot, q_new)
                 F_iter += inertial_force
-
-                if robot.sim_params.sparse:
-                    J_iter += sp.diags(inertial_jacobian, format='csr')
-                else:
-                    J_iter[ndof_diag, ndof_diag] += inertial_jacobian
+                # Optional: add inertia Jacobian if needed
 
             F_new, _ = self._compute_forces_and_jacobian(F_iter, J_iter, robot, q_eval, u_eval)
 
-            lhs = 0.5 * np.linalg.norm(F_new[robot.state.free_dof]) ** 2 - \
-                0.5 * np.linalg.norm(F) ** 2
+            # Evaluate Wolfe conditions (on free DOFs only)
+            F_norm_sq_old = 0.5 * np.linalg.norm(F)**2
+            F_norm_sq_new = 0.5 * np.linalg.norm(F_new[free_dof])**2
+            lhs = F_norm_sq_new - F_norm_sq_old
             rhs_low = alpha * m2 * d0
             rhs_high = alpha * m1 * d0
 
             if rhs_low <= lhs <= rhs_high:
-                # return alpha
                 success = True
             elif lhs < rhs_low:
                 alpha_low = alpha
             else:
                 alpha_high = alpha
 
-            if alpha_high < alpha_max :
+            # Update alpha
+            if alpha_high < alpha_max:
                 alpha = 0.5 * (alpha_low + alpha_high)
             else:
                 alpha = 10 * alpha
-            
-            if (alpha < alpha_min) or (alpha > alpha_max) or (iteration > 100) :
-                break
+
             iteration += 1
+
+            if (alpha < alpha_min) or (iteration > max_iter) or ((alpha_high - alpha_low) < tol):
+                # Line search failed to find suitable step
+                return 0.0
+
         return alpha
+
 
     def _finalize_update(self, robot: SoftRobot, q):
         u = self._compute_velocity(robot, q)

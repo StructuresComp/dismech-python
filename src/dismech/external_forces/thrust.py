@@ -96,7 +96,7 @@ def compute_thrust_force_and_jacobian(robot, q: np.ndarray, u: np.ndarray) -> ty
     thrust_dir = np.array([0, 0, 1])  # along Z
     total_force = -k * dV_dt * thrust_dir
 
-    print(f"dV/dt: {dV_dt:.5f}, Total thrust: {total_force}")
+    # print(f"dV/dt: {dV_dt:.5f}, Total thrust: {total_force}")
 
 
     force_per_node = total_force / n_nodes

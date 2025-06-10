@@ -40,24 +40,41 @@ def compute_damping_force(robot: SoftRobot, q: np.ndarray, u: np.ndarray) -> typ
     # Per-node Voronoi weights (each node has 3 DOFs)
     # vlen = robot.voronoi_ref_len_all  # shape (n_nodes,)
     # eta_v = eta * vlen            # shape (n_nodes,)
-    eta_v = eta * np.ones((n_nodes, 1))
-    eta_dof = np.repeat(eta_v, 3)  # shape (3 * n_nodes,) per DOF
+    n_nodes_shell = len(np.unique(robot.face_nodes_shell))
+    n_nodes_rod = n_nodes - n_nodes_shell
+    eta_v_shell = eta * np.ones((n_nodes_shell, 1))
+    eta_shell_dof = np.repeat(eta_v_shell, 3)  # shape (3 * n_nodes,) per DOF
+    eta_v_rod = eta*0.005 * np.ones((n_nodes_rod, 1))
+    eta_rod_dof = np.repeat(eta_v_rod, 3)  # shape (3 * n_nodes,) per DOF
 
     # Node DOF indices, shape (n_nodes, 3)
-    node_dof_indices = np.array([robot.map_node_to_dof(i) for i in range(n_nodes)])  # (n_nodes, 3)
-    flat_dof_indices = node_dof_indices.reshape(-1)
+    # node_dof_indices = np.array([robot.map_node_to_dof(i) for i in range(n_nodes)])  # (n_nodes, 3)
+    shell_node_dof_indices = np.array([
+        robot.map_node_to_dof(i) for i in range(n_nodes) if i in robot.face_nodes_shell
+    ])
+    rod_node_dof_indices = np.array([
+        robot.map_node_to_dof(i) for i in range(n_nodes) if i not in robot.face_nodes_shell
+    ]) # TO DO: define separate shell and rod nodes inside SoftRobot itself
+
+    flat_shell_dof_indices = shell_node_dof_indices.reshape(-1).astype(int)
+    flat_rod_dof_indices = rod_node_dof_indices.reshape(-1).astype(int)
 
     # Force
     Fd = np.zeros(n_dof)
-    Fd[flat_dof_indices] = -eta_dof * u[flat_dof_indices]
+    Fd[flat_shell_dof_indices] = -eta_shell_dof * u[flat_shell_dof_indices]
+    Fd[flat_rod_dof_indices] = -eta_rod_dof * u[flat_rod_dof_indices]
 
     # Jacobian
     if robot.sim_params.sparse:
-        J_diag = -eta_dof / dt
+        J_shell_diag = -eta_shell_dof / dt
+        J_rod_diag = -eta_rod_dof / dt
+        J_diag = np.concatenate((J_shell_diag, J_rod_diag))
         Jd = sp.diags((J_diag,), [0], shape=(n_dof, n_dof), format="csr")
     else:
         Jd = np.zeros((n_dof, n_dof))
-        J_diag = -eta_dof / dt
-        Jd[flat_dof_indices, flat_dof_indices] = J_diag
+        J_shell_diag = -eta_shell_dof / dt
+        J_rod_diag = -eta_rod_dof / dt
+        Jd[flat_shell_dof_indices, flat_shell_dof_indices] = J_shell_diag
+        Jd[flat_rod_dof_indices, flat_rod_dof_indices] = J_rod_diag
 
     return Fd, Jd

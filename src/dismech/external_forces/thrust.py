@@ -4,13 +4,14 @@ import numpy as np
 
 from ..soft_robot import SoftRobot
 
-def compute_approx_volume(robot, q):
+def compute_approx_volume(robot: SoftRobot, q: np.ndarray):
     """
     Compute an approximate enclosed volume of a closed hemispherical shell.
     Assumes faces are oriented correctly (outward normals).
     """
     face_nodes = robot.face_nodes_shell
-    positions = q.reshape(-1, 3)
+    n_nodes_shell = len(np.unique(robot.face_nodes_shell))
+    positions = q[:3 * n_nodes_shell].reshape(-1, 3)
     total_volume = 0.0
 
     for f in face_nodes:
@@ -20,7 +21,7 @@ def compute_approx_volume(robot, q):
 
     return abs(total_volume)
 
-def compute_approx_volume_and_gradient(robot, q: np.ndarray) -> typing.Tuple[float, np.ndarray]:
+def compute_approx_volume_and_gradient(robot: SoftRobot, q: np.ndarray) -> typing.Tuple[float, np.ndarray]:
     """
     Vectorized computation of:
     - Signed volume enclosed by the shell
@@ -44,7 +45,10 @@ def compute_approx_volume_and_gradient(robot, q: np.ndarray) -> typing.Tuple[flo
         Gradient of volume with respect to q.
     """
     face_nodes = robot.face_nodes_shell  # (n_faces, 3)
-    positions = q.reshape(-1, 3)         # (n_nodes, 3)
+    n_nodes_shell = len(np.unique(robot.face_nodes_shell))
+    # positions = q.reshape(-1, 3)         # (n_nodes, 3)
+    positions = q[:3 * n_nodes_shell].reshape(-1, 3)
+
 
     v0 = positions[face_nodes[:, 0]]  # (n_faces, 3)
     v1 = positions[face_nodes[:, 1]]
@@ -72,13 +76,14 @@ def compute_approx_volume_and_gradient(robot, q: np.ndarray) -> typing.Tuple[flo
     return abs(total_volume), dV_dq
 
 
-def compute_thrust_force_and_jacobian(robot, q: np.ndarray, u: np.ndarray) -> typing.Tuple[np.ndarray, typing.Union[np.ndarray, sp.csr_matrix]]:
+def compute_thrust_force_and_jacobian(robot: SoftRobot, q: np.ndarray, u: np.ndarray) -> typing.Tuple[np.ndarray, typing.Union[np.ndarray, sp.csr_matrix]]:
 
     dt = robot.sim_params.dt
     q0 = robot.state.q
     k = robot.env.thrust_coeff
     n_dof = robot.n_dof
     n_nodes = np.shape(robot.nodes)[0]
+    n_nodes_shell = len(np.unique(robot.face_nodes_shell))
     sparse = robot.sim_params.sparse
 
     # --- Compute volume and rate of change ---
@@ -98,21 +103,30 @@ def compute_thrust_force_and_jacobian(robot, q: np.ndarray, u: np.ndarray) -> ty
 
     # print(f"dV/dt: {dV_dt:.5f}, Total thrust: {total_force}")
 
+    shell_node_dof_indices = np.array([
+        robot.map_node_to_dof(i) for i in range(n_nodes) if i in robot.face_nodes_shell
+    ]).flatten().astype(int)  # Flatten to 1D array of DOF indices
 
-    force_per_node = total_force / n_nodes
 
-    for i in range(n_nodes):
-        idx = robot.map_node_to_dof(i)
-        F_thrust[idx] = force_per_node
+    force_per_node = total_force / n_nodes_shell
+
+    F_thrust[shell_node_dof_indices] = np.repeat(force_per_node, n_nodes_shell) # Apply force to each shell node DOF
 
     # --- Jacobian ---
+    dz = np.repeat(thrust_dir / n_nodes_shell, n_nodes_shell)  # (3 * n_nodes_shell,)
+    dV_dq_shell = dV_dq[shell_node_dof_indices]                # restrict to shell DOFs
+
     if sparse:
-        dz = np.tile(thrust_dir / n_nodes, n_nodes)  # (n_dof,)
-        data = -k * (1 / dt) * dV_dq * dz
-        J_thrust = sp.csr_matrix(data[np.newaxis, :] * np.ones((n_dof, 1)))
+        data = -k * (1 / dt) * dV_dq_shell * dz                # (3 * n_nodes_shell,)
+        J_thrust = sp.csr_matrix(
+            (data, (shell_node_dof_indices, shell_node_dof_indices)),
+            shape=(n_dof, n_dof)
+        )
     else:
-        dz = np.tile(thrust_dir / n_nodes, n_nodes)
-        J_thrust = -k * (1 / dt) * np.outer(dV_dq, dz)
+        J_thrust = np.zeros((n_dof, n_dof))
+        J_thrust[np.ix_(shell_node_dof_indices, shell_node_dof_indices)] = (
+            -k * (1 / dt) * np.outer(dV_dq_shell, dz)
+        )
     
     # print("F_thrust: ", F_thrust)
     # print("J_thrust: ", J_thrust)

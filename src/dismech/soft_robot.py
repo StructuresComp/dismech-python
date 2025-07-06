@@ -433,6 +433,14 @@ class SoftRobot:
         q[self._get_node_dof_mask(nodes, axis)] += perturbation
         return self.update(q)
 
+    def move_nodes_to(self, nodes: typing.List[int] | np.ndarray, target_positions: np.ndarray, axis: int | None = None):
+        q = np.copy(self.state.q)
+        target_positions = np.asarray(target_positions)
+        if target_positions.size == 3:
+            target_positions = np.tile(target_positions, len(nodes))
+        q[self._get_node_dof_mask(nodes, axis)] = target_positions
+        return self.update(q)
+
     def twist_edges(self, edges: typing.List[int] | np.ndarray, perturbation: np.ndarray):
         q = np.copy(self.state.q)
         q[self.map_edge_to_dof(edges)] += np.asarray(perturbation)

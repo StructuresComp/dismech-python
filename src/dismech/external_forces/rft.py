@@ -28,8 +28,20 @@ def compute_rft(
     I3 = np.eye(3)
     M = (ct - cn) * T[:, :, None] * T[:, None, :] + cn * I3
 
-    F_nodes = -np.einsum("nij,nj->ni", M, V).reshape(-1)
+    F_nodes = -np.einsum("nij,nj->ni", M, V)
+    # --- NEW CODE: multiply forces by voronoi length ---
+    voronoi_lengths = robot.voronoi_ref_len[:N]  # shape (N,)
+    F_nodes *= voronoi_lengths[:, None]
+    F_nodes = F_nodes.reshape(-1)  # shape (3 * N,)
+    # --------------------------------------------------
+
     J_blocks = (-M / dt)
+
+    # --- NEW CODE: multiply Jacobians by voronoi length ---
+    # Each 3×3 block is multiplied by the scalar voronoi length
+    J_blocks *= voronoi_lengths[:, None, None]
+    # -------------------------------------------------------
+
 
     # assemble block-diagonal
     base = 3 * np.arange(N)[:, None]

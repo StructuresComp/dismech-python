@@ -39,3 +39,4 @@ class SimParams:
     dtol: float
     solver: str = 'np'
     sparse: bool = False
+    line_search_iters: int = 20

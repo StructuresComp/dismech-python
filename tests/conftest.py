@@ -142,8 +142,8 @@ def shell_cantilever_n40():
 
 
 @pytest.fixture
-def softrobot_shell_cantilever_n40(shell_cantilever_geom, shell_cantilever_material, shell_cantilever_n40, dynamic_3d_sim, free_fall_env):
-    return dismech.SoftRobot(shell_cantilever_geom, shell_cantilever_material, shell_cantilever_n40, dynamic_3d_sim, free_fall_env)
+def softrobot_shell_cantilever_n40(shell_cantilever_geom, shell_cantilever_material, shell_cantilever_n40, dynamic_3d_sparse_sim, free_fall_env):
+    return dismech.SoftRobot(shell_cantilever_geom, shell_cantilever_material, shell_cantilever_n40, dynamic_3d_sparse_sim, free_fall_env)
 
 
 @pytest.fixture
@@ -262,6 +262,25 @@ def dynamic_3d_mid_edge_sim():
                              tol=1e-4,
                              ftol=1e-4,
                              dtol=1e-2)
+
+@pytest.fixture
+def dynamic_3d_sparse_sim():
+    return dismech.SimParams(static_sim=False,
+                             two_d_sim=False,
+                             use_mid_edge=False,
+                             use_line_search=False,
+                             show_floor=False,
+                             log_data=True,
+                             log_step=1,
+                             dt=1e-2,
+                             max_iter=25,
+                             total_time=3,
+                             plot_step=10,
+                             tol=1e-4,
+                             ftol=1e-4,
+                             dtol=1e-2,
+                             solver='pardiso',
+                             sparse=True)
 
 
 # envs

@@ -172,8 +172,8 @@ class Geometry:
                     bend_twist_signs.append(np.stack(
                         (s1 * np.ones(len(spring_edges)), s2 * np.ones(len(spring_edges))), axis=-1))
 
-            self.__bend_twist_springs = np.concat(bend_twist_springs)
-            self.__bend_twist_signs = np.concat(bend_twist_signs)
+            self.__bend_twist_springs = np.concat(bend_twist_springs) if len(bend_twist_springs) != 0 else np.empty(0)
+            self.__bend_twist_signs = np.concat(bend_twist_signs )if len(bend_twist_signs) != 0 else np.empty(0)
         else:
             self.__bend_twist_springs = np.empty(0)
             self.__bend_twist_signs = np.empty(0)
@@ -229,7 +229,7 @@ class Geometry:
         elif arr2.size:
             return arr2
         else:
-            return np.empty(0)
+            return np.empty((0, 2)) # always edge
 
     @staticmethod
     def from_txt(fname: str) -> "Geometry":

@@ -6,11 +6,12 @@ import numpy as np
 
 from .state import RobotState
 from .stiffness import compute_rod_stiffness, compute_shell_stiffness
-from .frame_util import compute_reference_twist, compute_tfc_midedge, parallel_transport
+from .frame_util import compute_reference_twist, compute_tfc_midedge, parallel_transport, construct_edge_combinations, construct_triangle_combinations
 from .environment import Environment
 from .geometry import Geometry
 from .params import GeomParams, Material, SimParams
-from .springs import BendTwistSpring, StretchSpring, HingeSpring, TriangleSpring
+from .springs import StretchSprings, BendSprings, TwistSprings, HingeSprings, TriangleSpring
+from .contact import ContactPair
 
 
 _TANGENT_THRESHOLD = 1e-10
@@ -31,10 +32,18 @@ class SoftRobot:
         self._init_springs(geo)
         self.__mass_matrix = self._get_mass_matrix(geom, material)
 
-        # self.__edge_combos = self._construct_edge_combinations(
-        #    np.concatenate((geo.rod_edges, geo.rod_shell_joint_edges)
-        #                   ) if geo.rod_shell_joint_edges.size else geo.rod_edges
-        # )
+        # Contact
+        self.__edge_combos = construct_edge_combinations(
+            np.concatenate((geo.rod_edges, geo.rod_shell_joint_edges)
+                           ) if geo.rod_shell_joint_edges.size else geo.rod_edges
+        )
+        self.__triangle_combos = construct_triangle_combinations(geo.face_nodes)
+
+        self.__contact_pairs = [ContactPair(
+            e, self.map_node_to_dof) for e in self.__edge_combos]
+        
+        self.__triangle_contact_pairs = [ContactPair(
+            t, self.map_node_to_dof) for t in self.__triangle_combos]
 
     def _init_geometry(self, geo: Geometry):
         """Initialize geometry properties"""
@@ -75,6 +84,7 @@ class SoftRobot:
 
         self.__ref_len = self._get_ref_len()
         self.__voronoi_ref_len = self._get_voronoi_ref_len()
+        self.__voronoi_ref_len_all = self._get_voronoi_ref_len_all()
         self.__voronoi_area = self._get_voronoi_area()
         self.__face_area = self._get_face_area()
 
@@ -107,30 +117,30 @@ class SoftRobot:
     def _init_springs(self, geo: Geometry):
         """Initialize spring list objects"""
         n_rod = geo.rod_stretch_springs.shape[0]
+        n_shell = geo.shell_stretch_springs.shape[0]
 
-        # Stretch springs
-        rod_springs = [StretchSpring(spring,
-                                     self.__ref_len[i],
-                                     self.__EA,
-                                     self.map_node_to_dof)
-                       for i, spring in enumerate(geo.rod_stretch_springs)]
-        shell_springs = [StretchSpring(spring,
-                                       self.__ref_len[i+n_rod],
-                                       self.__ks[i + n_rod],
-                                       self.map_node_to_dof)
-                         for i, spring in enumerate(geo.shell_stretch_springs)]
-        self.__stretch_springs = rod_springs + shell_springs
+        nodes_ind = np.concat([geo.rod_stretch_springs,
+                               geo.shell_stretch_springs], axis=0)
+        ref_len = self.__ref_len[:n_rod + n_shell]
+        EA = np.concat([np.full(n_rod, self.__EA),
+                       self.__ks[n_rod:n_rod+n_shell]], axis=0)
+
+        self.__stretch_springs = StretchSprings.from_arrays(
+            nodes_ind, ref_len, EA, self.map_node_to_dof)
 
         # Bend/twist spring
-        self.__bend_twist_springs = [
-            BendTwistSpring(spring,
-                            sign,
-                            self.__ref_len,
-                            np.array([self.__EI1, self.__EI2]),
-                            self.__GJ,
-                            self.map_node_to_dof,
-                            self.map_edge_to_dof)
-            for spring, sign in zip(geo.bend_twist_springs, geo.bend_twist_signs)]
+        n_bt_springs = geo.bend_twist_springs.shape[0]
+        EI = np.tile(np.array([self.__EI1, self.__EI2]),
+                     n_bt_springs).reshape(-1, 2)
+        GJ = np.full(n_bt_springs, self.__GJ)
+
+        self.__bend_springs = BendSprings.from_arrays(
+            geo.bend_twist_springs, geo.bend_twist_signs, EI,
+            self.ref_len, self.map_node_to_dof, self.map_edge_to_dof)
+
+        self.__twist_springs = TwistSprings.from_arrays(
+            geo.bend_twist_springs, geo.bend_twist_signs, GJ,
+            self.ref_len, self.map_node_to_dof, self.map_edge_to_dof)
 
         if self.__sim_params.use_mid_edge:
             # Triangle springs
@@ -162,11 +172,9 @@ class SoftRobot:
             self.__shell_hinge_springs = []
         else:
             # Hinge springs
-            self.__shell_hinge_springs = [
-                HingeSpring(spring,
-                            self.__kb,
-                            self.map_node_to_dof)
-                for spring in geo.hinges]
+            kb = np.full(geo.hinges.shape[0], self.__kb)
+            self.__shell_hinge_springs = HingeSprings.from_arrays(
+                geo.hinges, kb, self.map_node_to_dof)
             self.__triangle_springs = []
 
     def _get_mass_matrix(self, geom: GeomParams, material: Material) -> np.ndarray:
@@ -216,6 +224,15 @@ class SoftRobot:
         edges = self.__edges[:self.__n_edges_dof]
         n_nodes = self.__n_nodes
         weights = 0.5 * self.__ref_len[:self.__n_edges_dof]
+        contributions = np.zeros(n_nodes)
+        np.add.at(contributions, edges[:, 0], weights)
+        np.add.at(contributions, edges[:, 1], weights)
+        return contributions
+    
+    def _get_voronoi_ref_len_all(self) -> np.ndarray:
+        edges = self.__edges
+        n_nodes = self.__n_nodes
+        weights = 0.5 * self.__ref_len
         contributions = np.zeros(n_nodes)
         np.add.at(contributions, edges[:, 0], weights)
         np.add.at(contributions, edges[:, 1], weights)
@@ -340,17 +357,14 @@ class SoftRobot:
         return m1, m2
 
     def compute_reference_twist(self,
-                                springs: typing.List[BendTwistSpring],
+                                springs: TwistSprings,
                                 q: np.ndarray,
                                 a1: np.ndarray,
                                 ref_twist: np.ndarray) -> np.ndarray:
-        if len(springs) == 0:
+        if springs.N == 0:
             return np.array([])
 
-        edges = np.array([s.edges_ind for s in springs])
-        sgn = np.array([s.sgn for s in springs])
-
-        return compute_reference_twist(edges, sgn, a1, self._compute_tangent(q), ref_twist)
+        return compute_reference_twist(springs.edges_ind, springs.sgn, a1, self._compute_tangent(q), ref_twist)
 
     def _compute_tangent(self, q: np.ndarray) -> np.ndarray:
         edges = self.__edges[:self.__n_edges_dof]
@@ -413,12 +427,23 @@ class SoftRobot:
 
     def move_nodes(self, nodes: typing.List[int] | np.ndarray, perturbation: np.ndarray, axis: int | None = None):
         q = np.copy(self.state.q)
+        perturbation = np.asarray(perturbation)
+        if perturbation.size == 3:
+            perturbation = np.tile(perturbation, len(nodes))
         q[self._get_node_dof_mask(nodes, axis)] += perturbation
+        return self.update(q)
+
+    def move_nodes_to(self, nodes: typing.List[int] | np.ndarray, target_positions: np.ndarray, axis: int | None = None):
+        q = np.copy(self.state.q)
+        target_positions = np.asarray(target_positions)
+        if target_positions.size == 3:
+            target_positions = np.tile(target_positions, len(nodes))
+        q[self._get_node_dof_mask(nodes, axis)] = target_positions
         return self.update(q)
 
     def twist_edges(self, edges: typing.List[int] | np.ndarray, perturbation: np.ndarray):
         q = np.copy(self.state.q)
-        q[self.map_edge_to_dof(edges)] += perturbation
+        q[self.map_edge_to_dof(edges)] += np.asarray(perturbation)
         return self.update(q)
 
     # Utility
@@ -504,17 +529,22 @@ class SoftRobot:
     # Springs
 
     @property
-    def bend_twist_springs(self) -> typing.List[BendTwistSpring]:
+    def bend_springs(self) -> BendSprings:
         """List of bend-twist spring elements"""
-        return self.__bend_twist_springs
+        return self.__bend_springs
+    
+    @property
+    def twist_springs(self) -> TwistSprings:
+        """List of bend-twist spring elements"""
+        return self.__twist_springs
 
     @property
-    def stretch_springs(self) -> typing.List[StretchSpring]:
+    def stretch_springs(self) -> StretchSprings:
         """List of stretch spring elements"""
         return self.__stretch_springs
 
     @property
-    def hinge_springs(self) -> typing.List[HingeSpring]:
+    def hinge_springs(self) -> HingeSprings:
         """List of hinge spring elements"""
         return self.__shell_hinge_springs
 
@@ -522,6 +552,14 @@ class SoftRobot:
     def triangle_springs(self) -> typing.List[TriangleSpring]:
         """List of triangle spring elements"""
         return self.__triangle_springs
+
+    @property
+    def contact_pairs(self):
+        return self.__contact_pairs
+    
+    @property
+    def tri_contact_pairs(self):
+        return self.__triangle_contact_pairs
 
     # Visualization properties
 
@@ -551,6 +589,16 @@ class SoftRobot:
     def ref_len(self) -> np.ndarray:
         """Reference lengths for all edges (n_edges,)"""
         return self.__ref_len.view()
+    
+    @property
+    def voronoi_ref_len(self) -> np.ndarray:
+        """Reference lengths for all edges (n_edges,)"""
+        return self.__voronoi_ref_len.view()
+    
+    @property
+    def voronoi_ref_len_all(self) -> np.ndarray:
+        """Reference lengths for all edges (n_edges,)"""
+        return self.__voronoi_ref_len_all.view()
 
     @property
     def voronoi_area(self) -> np.ndarray:

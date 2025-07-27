@@ -17,7 +17,7 @@ def rel_path(fname: str) -> pathlib.Path:
 
 
 def bend_energy_helper(robot, truth):
-    energy = BendEnergy(robot.bend_twist_springs, robot.state)
+    energy = BendEnergy(robot.bend_springs, robot.state)
     new_state = RobotState.init(truth['q'].flatten(), np.ndarray(
         []), np.ndarray([]), truth['m1'], truth['m2'], np.ndarray([]), np.ndarray([]))
     Fb, Jb = energy.grad_hess_energy_linear_elastic(new_state)

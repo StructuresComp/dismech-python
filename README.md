@@ -20,6 +20,14 @@ pip install -r requirements.txt
 pip install -e .                    # Editable installation for development
 ```
 
+## UV Setup
+
+This Python library has been updated to work with [uv](https://docs.astral.sh/uv/).
+
+```bash
+uv pip install -e . # automatically creates .venv
+```
+
 ## Features
 
 - [x] 3D [discrete elastic rod](https://www.cs.columbia.edu/cg/pdfs/143-rods.pdf) stretching, bending and twisting.

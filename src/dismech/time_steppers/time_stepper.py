@@ -82,7 +82,7 @@ class TimeStepper(metaclass=abc.ABCMeta):
                 ret.append(robot)
 
             # print current time
-            print("current_time: ", i*robot.sim_params.dt)
+            #print("current_time: ", i*robot.sim_params.dt)
         return ret
 
     def step(self, robot: SoftRobot = None, debug: bool = False) -> SoftRobot:
@@ -264,7 +264,7 @@ class TimeStepper(metaclass=abc.ABCMeta):
                    iteration: int,
                    robot: SoftRobot):
         """ Check all convergence criteria """
-        print(err)
+        #print(err)
         disp_converged = np.max(np.abs(dq)) / \
             robot.sim_params.dt < robot.sim_params.dtol
         force_converged = err < robot.sim_params.tol

@@ -59,6 +59,7 @@ class SoftRobot:
         self.__edges = geo.edges
         self.__face_nodes_shell = geo.face_nodes
         self.__twist_angles = geo.twist_angles
+        self.__rod_edges = geo.rod_edges
 
         # Initialize DOF vector
         self.__n_dof = 3 * self.__n_nodes + self.__n_edges_dof
@@ -505,6 +506,11 @@ class SoftRobot:
         return self.__n_dof
 
     @property
+    def n_nodes(self) -> int:
+        """Total number of nodes"""
+        return self.__n_nodes
+
+    @property
     def node_dof_indices(self) -> np.ndarray:
         """Node DOF indices matrix (n_nodes, 3)"""
         return np.arange(3 * self.__n_nodes).reshape(-1, 3)
@@ -572,6 +578,11 @@ class SoftRobot:
     def edges(self) -> np.ndarray:
         """Edges (n_edges, 2)"""
         return self.__edges.view()
+    
+    @property
+    def rod_edges(self) -> np.ndarray:
+        """Edges (n_edges, 2)"""
+        return self.__rod_edges.view()
 
     @property
     def face_nodes_shell(self) -> np.ndarray:

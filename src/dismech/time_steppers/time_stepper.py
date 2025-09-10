@@ -29,6 +29,7 @@ class TimeStepper(metaclass=abc.ABCMeta):
     def __init__(self, robot: SoftRobot, min_force=1e-8, dtype=np.float64):
         self.robot = robot
         self._min_force = min_force
+        self.original_dt = robot.sim_params.dt
 
         # Initialize elastics
         self.elastic_energies: typing.Dict[str, ElasticEnergy] = {}
@@ -82,10 +83,10 @@ class TimeStepper(metaclass=abc.ABCMeta):
                 ret.append(robot)
 
             # print current time
-            #print("current_time: ", i*robot.sim_params.dt)
+            print("current_time: ", i*robot.sim_params.dt)
         return ret
 
-    def step(self, robot: SoftRobot = None, debug: bool = False) -> SoftRobot:
+    def step(self, robot: SoftRobot = None, debug: bool = True) -> SoftRobot:
         robot = robot or self.robot
 
         # Initialize iteration variables
@@ -111,7 +112,7 @@ class TimeStepper(metaclass=abc.ABCMeta):
             else:
                 J = np.zeros((q.shape[0], q.shape[0]))
 
-
+            # Inertial force vs equilibrium
             if not robot.sim_params.static_sim:
                 inertial_force, inertial_jacobian = self._compute_inertial_force_and_jacobian(
                     robot, q)
@@ -125,7 +126,6 @@ class TimeStepper(metaclass=abc.ABCMeta):
             F, J = self._compute_forces_and_jacobian(
                 F, J, robot, q_eval, u_eval, iteration == 1)
 
-            # Inertial force vs equilibrium
             
 
             # Handle free DOF components
@@ -142,6 +142,10 @@ class TimeStepper(metaclass=abc.ABCMeta):
                 dq_free = np.zeros_like(f_free)
             else:
                 dq_free = self._solver.solve(j_free, f_free)
+
+            # if iteration > 20:
+            #     # Decrease time step if the system is not converging
+            #     robot.sim_params.dt = self.original_dt * 0.1
 
             # Adaptive damping and update
             if iteration > robot.sim_params.line_search_iters:
@@ -189,7 +193,7 @@ class TimeStepper(metaclass=abc.ABCMeta):
         total = 0.0
         for energy in self.elastic_energies.values():
             total += energy.get_energy_linear_elastic(state)
-        return total
+        return np.array(total)
 
     def _compute_evaluation_position(self, robot: SoftRobot, q: np.ndarray) -> np.ndarray:
         return q

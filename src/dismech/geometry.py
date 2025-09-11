@@ -17,7 +17,7 @@ class Geometry:
     def __init__(self,
                  nodes: np.ndarray,
                  edges: np.ndarray,
-                 face_nodes: np.ndarray):
+                 face_nodes: np.ndarray, plot_from_txt: bool = True):
         """
         acts as createGeometry.m
         """
@@ -215,6 +215,19 @@ class Geometry:
         # TODO: Make this mutable
         self.__twist_angles = np.zeros(
             n_rod_edges + np.size(self.__rod_shell_joint_edges_total, 0))
+        
+        # Plot from txt
+        if plot_from_txt:
+            import matplotlib.pyplot as plt
+            from mpl_toolkits.mplot3d import Axes3D
+            fig = plt.figure()
+            ax = fig.add_subplot(111, projection='3d')
+            ax.scatter(self.__nodes[:, 0], self.__nodes[:, 1], self.__nodes[:, 2], c='b', marker='o')
+            for edge in self.__edges:
+                p1 = self.__nodes[edge[0], :]
+                p2 = self.__nodes[edge[1], :]
+                ax.plot([p1[0], p2[0]], [p1[1], p2[1]], [p1[2], p2[2]], c='b')
+            plt.show()
 
     @staticmethod
     def __safe_concat(arrs: typing.Tuple[np.ndarray]) -> np.ndarray:

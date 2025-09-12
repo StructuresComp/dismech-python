@@ -137,6 +137,9 @@ class TimeStepper(metaclass=abc.ABCMeta):
                 j_free = J[np.ix_(
                     robot.state.free_dof, robot.state.free_dof)]
 
+            # For debugging:
+            # print("Determinant of Jacobian: ", np.linalg.det(j_free.toarray() if robot.sim_params.sparse else j_free))
+
             # Linear system solver
             if np.linalg.norm(f_free) < self._min_force:
                 dq_free = np.zeros_like(f_free)

@@ -186,3 +186,6 @@ rawDataRod.txt
 rawDataShell.txt
 rodData.js
 shellData.js
+
+# obj files
+*.obj

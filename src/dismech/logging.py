@@ -1,12 +1,17 @@
 import numpy as np
 
-def logDataForRendering(dofs, time_array, softRobot, Nsteps, static_sim, mapNodetoDOF):
+def logDataForRendering(
+    dofs,
+    time_array,
+    softRobot,
+    Nsteps,
+    static_sim,
+    mapNodetoDOF,
+    log_step=1
+):
     dof_with_time = np.hstack([time_array, dofs])
-    print(np.shape(dof_with_time), np.shape(time_array), np.shape(dofs))
     n_rod_nodes = len(np.unique(softRobot.rod_edges))
     n_faces = len(softRobot.face_nodes_shell)
-    print(np.shape(softRobot.face_nodes_shell))
-    print(n_faces)
 
     if static_sim:
         rod_data = np.zeros((n_rod_nodes, 4))
@@ -16,9 +21,7 @@ def logDataForRendering(dofs, time_array, softRobot, Nsteps, static_sim, mapNode
 
         shell_data = np.zeros((3 * n_faces, 3))
         for j in range(n_faces):
-            n1 = softRobot.face_nodes_shell[j, 0]
-            n2 = softRobot.face_nodes_shell[j, 1]
-            n3 = softRobot.face_nodes_shell[j, 2]
+            n1, n2, n3 = softRobot.face_nodes_shell[j]
             shell_data[3*j:3*j+3, :] = np.vstack([
                 dof_with_time[-1, 1 + mapNodetoDOF(n1)],
                 dof_with_time[-1, 1 + mapNodetoDOF(n2)],
@@ -29,20 +32,23 @@ def logDataForRendering(dofs, time_array, softRobot, Nsteps, static_sim, mapNode
         np.savetxt('rawDataShell.txt', shell_data, fmt='%.6e')
         return rod_data, shell_data
 
-    # For dynamic case
-    rod_data = np.zeros((n_rod_nodes * Nsteps, 4))
-    for i in range(Nsteps-1):
-        for j in range(n_rod_nodes):
-            rod_data[i * n_rod_nodes + j, 0] = dof_with_time[i, 0]
-            rod_data[i * n_rod_nodes + j, 1:] = dof_with_time[i, 1 + mapNodetoDOF(j)]
+    # indices to log
+    frame_indices = list(range(0, Nsteps, log_step))
+    n_frames = len(frame_indices)
 
-    shell_data = np.zeros((3 * n_faces * Nsteps, 3))
-    for i in range(Nsteps-1):
+    rod_data = np.zeros((n_rod_nodes * n_frames, 4))
+    shell_data = np.zeros((3 * n_faces * n_frames, 3))
+
+    for k, i in enumerate(frame_indices):
+        # rod data
+        for j in range(n_rod_nodes):
+            rod_data[k * n_rod_nodes + j, 0] = dof_with_time[i, 0]
+            rod_data[k * n_rod_nodes + j, 1:] = dof_with_time[i, 1 + mapNodetoDOF(j)]
+
+        # shell data
         for j in range(n_faces):
-            n1 = softRobot.face_nodes_shell[j, 0]
-            n2 = softRobot.face_nodes_shell[j, 1]
-            n3 = softRobot.face_nodes_shell[j, 2]
-            idx = i * 3 * n_faces + 3 * j
+            n1, n2, n3 = softRobot.face_nodes_shell[j]
+            idx = k * 3 * n_faces + 3 * j
             shell_data[idx:idx+3, :] = np.vstack([
                 dof_with_time[i, 1 + mapNodetoDOF(n1)],
                 dof_with_time[i, 1 + mapNodetoDOF(n2)],
@@ -53,6 +59,7 @@ def logDataForRendering(dofs, time_array, softRobot, Nsteps, static_sim, mapNode
     np.savetxt('rawDataShell.txt', shell_data, fmt='%.6e')
 
     return rod_data, shell_data
+
 
 def export_rod_shell_data(robot, rod_file='rawDataRod.txt', shell_file='rawDataShell.txt',
                           rod_js='rodData.js', shell_js='shellData.js',

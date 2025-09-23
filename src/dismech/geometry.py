@@ -220,14 +220,27 @@ class Geometry:
         if plot_from_txt:
             import matplotlib.pyplot as plt
             from mpl_toolkits.mplot3d import Axes3D
+
             fig = plt.figure()
             ax = fig.add_subplot(111, projection='3d')
-            ax.scatter(self.__nodes[:, 0], self.__nodes[:, 1], self.__nodes[:, 2], c='b', marker='o')
+
+            # Plot nodes in red
+            ax.scatter(self.__nodes[:, 0], self.__nodes[:, 1], self.__nodes[:, 2], 
+                    c='red', marker='o')
+
+            # Plot edges in black
             for edge in self.__edges:
                 p1 = self.__nodes[edge[0], :]
                 p2 = self.__nodes[edge[1], :]
-                ax.plot([p1[0], p2[0]], [p1[1], p2[1]], [p1[2], p2[2]], c='b')
+                ax.plot([p1[0], p2[0]], [p1[1], p2[1]], [p1[2], p2[2]], 
+                        c='black')
+
+            # Remove axes, ticks, and background
+            ax.set_axis_off()
+            ax.grid(False)
+
             plt.show()
+
 
     @staticmethod
     def __safe_concat(arrs: typing.Tuple[np.ndarray]) -> np.ndarray:

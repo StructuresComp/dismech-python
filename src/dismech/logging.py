@@ -109,3 +109,72 @@ def export_rod_shell_data(robot, rod_file='rawDataRod.txt', shell_file='rawDataS
             shell_fileID.write(f'{x}, {y}, {z},\n')
 
         shell_fileID.write('];\n')
+
+def export_parachute_data(dof_with_time, elStretchRod, MultiRod,
+                          shell_file='rawDataShell.txt',
+                          rod_js='rodData.js', shell_js='shellData.js',
+                          scaleFactor=10, rod_radius=0.32):
+    """
+    Export rod + shell data for parachute visualization into JS files.
+
+    Parameters
+    ----------
+    dof_with_time : np.ndarray
+        DOF with time array (shape: (3*n_nodes+1, steps)).
+    elStretchRod : np.ndarray
+        Rod element connectivity matrix.
+    MultiRod : object
+        Object with attributes: n_nodes, n_rod_nodes, n_faces.
+    shell_file : str
+        Path to raw shell node data (.txt).
+    rod_js : str
+        Output JS file path for rod data.
+    shell_js : str
+        Output JS file path for shell data.
+    scaleFactor : float
+        Factor to scale node coordinates.
+    rod_radius : float
+        Radius of rod.
+    """
+
+    # === Rod data ===
+    node_data = scaleFactor * dof_with_time[:, 0:3*MultiRod.n_nodes]
+    # connectivity_matrix = elStretchRod - np.ones_like(elStretchRod, dtype=int)
+    connectivity_matrix = elStretchRod
+    n_Tri = MultiRod.face_nodes_shell.shape[0]
+
+    with open(rod_js, 'w') as f:
+        f.write('var rodData = {\n')
+        # Uncomment if you want to include:
+        # f.write(f'  nNodes : {MultiRod.n_rod_nodes},\n')
+        # f.write(f'  rodRadius : {rod_radius},\n')
+
+        # Node positions
+        f.write('  nodePositions : [\n')
+        for row in node_data:
+            row_str = ', '.join(map(str, row))
+            f.write(f'    [{row_str}],\n')
+        f.write('  ],\n')
+
+        # Connectivity
+        f.write('  connectivity : [\n')
+        for row in connectivity_matrix:
+            row_str = ', '.join(map(str, row))
+            f.write(f'    [{row_str}],\n')
+        f.write('  ]\n')
+
+        f.write('};\n')
+
+    # === Shell data ===
+    ds = np.loadtxt(shell_file)
+
+    with open(shell_js, 'w') as f:
+        f.write('var shellData = {\n')
+        f.write(f'  nTri : {n_Tri},\n')
+        f.write('  nodes : [\n')
+        for row in ds:
+            x, y, z = row * scaleFactor
+            f.write(f'    {x}, {y}, {z},\n')
+        f.write('  ]\n')
+        f.write('};\n')
+

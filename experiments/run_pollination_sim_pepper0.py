@@ -44,41 +44,131 @@ def avg_cycle_amplitude_hilbert(x: np.ndarray) -> float:
     return float(np.median(envelope))
 
 
-def estimate_frequency(signal: np.ndarray, dt: float) -> float:
+def _parabolic_interpolation(y, k):
     """
-    Estimate dominant frequency of a periodic signal using FFT.
+    Fit a parabola through points (k-1, y[k-1]), (k, y[k]), (k+1, y[k+1])
+    and return the sub-bin offset p in [-0.5, 0.5] (approximately).
+    """
+    if k <= 0 or k >= len(y) - 1:
+        return 0.0
+    alpha, beta, gamma = y[k-1], y[k], y[k+1]
+    denom = (alpha - 2*beta + gamma)
+    if denom == 0:
+        return 0.0
+    return 0.5 * (alpha - gamma) / denom
+
+def estimate_frequency_fft(signal, dt, min_freq=0.0, max_freq=None, pad_factor=8):
+    """
+    Dominant-frequency estimator using:
+      - mean removal
+      - Hann window
+      - zero padding
+      - parabolic interpolation around the spectral peak (log-magnitude)
+    Works well for fractional-bin frequencies.
 
     Parameters
     ----------
-    signal : 1D np.ndarray
-        The time-varying signal (samples).
-    dt : float
-        Time step between samples.
+    signal : (N,) array
+    dt     : float, sampling interval (s)
+    min_freq, max_freq : optional band-limit for the search (Hz)
+    pad_factor : int >= 1, zero-padding multiplier
 
     Returns
     -------
-    freq : float
-        Dominant frequency (Hz).
+    f_hat : float (Hz)
     """
-    signal = np.asarray(signal).ravel()
-    n = len(signal)
-    if n < 2:
-        return float("nan")
+    x = np.asarray(signal, dtype=float)
+    x = x - np.mean(x)
+    N = len(x)
+    fs = 1.0 / dt
 
-    # Remove mean to avoid 0 Hz dominance
-    signal = signal - np.mean(signal)
+    # Window to reduce leakage
+    w = np.hanning(N)
+    xw = x * w
 
-    # FFT
-    freqs = np.fft.rfftfreq(n, d=dt)   # frequency bins (Hz)
-    fft_vals = np.fft.rfft(signal)     # FFT coefficients
-    magnitude = np.abs(fft_vals)
+    # Zero pad to improve bin resolution
+    Npad = int(2 ** np.ceil(np.log2(max(N, 16)))) * max(1, int(pad_factor))
+    X = np.fft.rfft(xw, n=Npad)
+    freqs = np.fft.rfftfreq(Npad, d=dt)
 
-    if magnitude.size <= 1:
-        return float("nan")
+    # Limit search band
+    lo = 1  # skip DC by default
+    hi = len(freqs) - 1
+    if min_freq is not None:
+        lo = max(lo, int(np.ceil(min_freq * Npad / fs)))
+    if max_freq is not None:
+        hi = min(hi, int(np.floor(max_freq * Npad / fs)))
 
-    # Find the peak frequency (excluding DC = 0 Hz)
-    peak_idx = np.argmax(magnitude[1:]) + 1
-    return float(freqs[peak_idx])
+    if hi <= lo:
+        raise ValueError("Invalid min_freq/max_freq band for the given data length.")
+
+    # Use log-magnitude for more stable interpolation
+    mag_log = np.log(np.abs(X[lo:hi+1])**2 + 1e-30)
+
+    # Peak bin in the restricted band
+    k_rel = int(np.argmax(mag_log))
+    k = lo + k_rel
+
+    # Parabolic interpolation around the peak
+    p = _parabolic_interpolation(mag_log, k - lo)  # offset within the sliced array
+    f_hat = (k + p) * fs / Npad
+    return f_hat
+
+def estimate_frequency_autocorr(signal, dt, min_freq=0.0, max_freq=None):
+    """
+    Dominant-frequency via autocorrelation peak with parabolic interpolation.
+    Good cross-check to FFT; resilient to mild non-sinusoidal waveforms.
+
+    Parameters
+    ----------
+    signal : (N,) array
+    dt     : float, sampling interval (s)
+    min_freq, max_freq : optional search band (Hz)
+
+    Returns
+    -------
+    f_hat : float (Hz)
+    """
+    x = np.asarray(signal, dtype=float)
+    x = x - np.mean(x)
+    N = len(x)
+    fs = 1.0 / dt
+
+    # Full autocorr then keep non-negative lags
+    acf = np.correlate(x, x, mode='full')[N-1:]
+    # Optional normalization improves numerical stability
+    acf = acf / (np.arange(N, 0, -1))
+
+    # Determine lag search window from freq band
+    lag_min = 1 if (min_freq is None or min_freq <= 0) else int(np.floor(fs / max_freq)) if max_freq else 1
+    lag_max = N-2
+    if min_freq and min_freq > 0:
+        lag_max = min(lag_max, int(np.ceil(fs / min_freq)))
+
+    if lag_max <= lag_min + 1:
+        raise ValueError("Signal too short for the requested frequency band.")
+
+    # Peak of ACF in that lag range
+    k = lag_min + int(np.argmax(acf[lag_min:lag_max+1]))
+
+    # Parabolic interpolation around k (in ACF domain)
+    p = _parabolic_interpolation(acf, k)
+    period = (k + p) / fs
+    if period <= 0:
+        raise ValueError("Autocorr-based period estimate invalid (non-positive).")
+    return 1.0 / period
+
+def estimate_frequency(signal, dt, method="fft", **kwargs):
+    """
+    Wrapper: method in {"fft", "acf"}.
+    kwargs passed to the chosen estimator.
+    """
+    if method == "fft":
+        return estimate_frequency_fft(signal, dt, **kwargs)
+    elif method == "acf":
+        return estimate_frequency_autocorr(signal, dt, **kwargs)
+    else:
+        raise ValueError("method must be 'fft' or 'acf'")
 
 
 def build_amps_from_xyz0(
@@ -124,6 +214,7 @@ def run_simulation(
     A_main: float = 4e-3,
     freq: float = 1.6,
     flower_node: int = 143,
+    dt: float = 1e-3,
 ):
     # --- Geometry / materials / sim params ---
     geom = dismech.GeomParams(
@@ -132,8 +223,8 @@ def run_simulation(
     )
 
     material = dismech.Material(
-        density=1500,
-        youngs_rod=3.16e7,
+        density=1100,
+        youngs_rod=2.16e7,
         youngs_shell=0,
         poisson_rod=0.5,
         poisson_shell=0,
@@ -147,7 +238,7 @@ def run_simulation(
         show_floor=False,
         log_data=True,
         log_step=1,
-        dt=1e-3,
+        dt=dt,
         max_iter=50,
         total_time=5,
         plot_step=100,

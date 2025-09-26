@@ -17,7 +17,7 @@ class Geometry:
     def __init__(self,
                  nodes: np.ndarray,
                  edges: np.ndarray,
-                 face_nodes: np.ndarray, plot_from_txt: bool = True):
+                 face_nodes: np.ndarray, plot_from_txt: bool = True, plotly: bool = True):
         """
         acts as createGeometry.m
         """
@@ -218,15 +218,87 @@ class Geometry:
         
         # Plot from txt
         if plot_from_txt:
+            nodes = self.__nodes          # (N,3)
+            edges = np.asarray(self.__edges, dtype=int)  # (M,2) zero-based indices
+            if plotly:
+                import plotly.graph_objects as go
+
+                nodes = self.__nodes
+                edges = np.asarray(self.__edges, dtype=int)
+
+                # Build line segments with NaN separators
+                x, y, z = [], [], []
+                for a, b in edges:
+                    x += [nodes[a,0], nodes[b,0], None]
+                    y += [nodes[a,1], nodes[b,1], None]
+                    z += [nodes[a,2], nodes[b,2], None]
+
+                fig = go.Figure()
+
+                # edges
+                fig.add_trace(go.Scatter3d(
+                    x=x, y=y, z=z, mode='lines',
+                    line=dict(color='black', width=3), showlegend=False
+                ))
+                # nodes
+                fig.add_trace(go.Scatter3d(
+                    x=nodes[:,0], y=nodes[:,1], z=nodes[:,2],
+                    mode='markers',
+                    marker=dict(size=3.5, color='red'),
+                    name='Nodes'
+                ))
+
+                fig.update_layout(
+                    scene=dict(
+                        xaxis=dict(visible=False),
+                        yaxis=dict(visible=False),
+                        zaxis=dict(visible=False),
+                        aspectmode='data',          # <-- preserves proportions
+                        camera_projection_type='orthographic'
+                    ),
+                    margin=dict(l=0,r=0,t=0,b=0),
+                )
+                fig.show()
+        else:
             import matplotlib.pyplot as plt
             from mpl_toolkits.mplot3d import Axes3D
-            fig = plt.figure()
+            from mpl_toolkits.mplot3d.art3d import Line3DCollection
+
+
+            fig = plt.figure(figsize=(5,7), dpi=200)
             ax = fig.add_subplot(111, projection='3d')
-            ax.scatter(self.__nodes[:, 0], self.__nodes[:, 1], self.__nodes[:, 2], c='b', marker='o')
-            for edge in self.__edges:
-                p1 = self.__nodes[edge[0], :]
-                p2 = self.__nodes[edge[1], :]
-                ax.plot([p1[0], p2[0]], [p1[1], p2[1]], [p1[2], p2[2]], c='b')
+
+            # ---- plot nodes (red) ----
+            ax.scatter(nodes[:,0], nodes[:,1], nodes[:,2],
+                    c='red', s=12, marker='o', depthshade=False, alpha=0.95)
+
+            # ---- plot edges (black, fast) ----
+            segs = np.stack([nodes[edges[:,0]], nodes[edges[:,1]]], axis=1)  # (M,2,3)
+            lc = Line3DCollection(segs, colors='k', linewidths=1.4, alpha=0.95)
+            ax.add_collection3d(lc)
+
+            # ---- equal aspect + nice framing ----
+            mins = nodes.min(axis=0)
+            maxs = nodes.max(axis=0)
+            ranges = maxs - mins
+            max_range = ranges.max()
+            center = (mins + maxs) / 2.0
+            # make a cube so all axes share the same scale
+            for (c, axis) in zip(center, 'xyz'):
+                lim = (c - max_range/2, c + max_range/2)
+                getattr(ax, f"set_{axis}lim")(lim)
+
+            # keep data proportions inside the cube (prevents skewed box)
+            ax.set_box_aspect((1,1,1))
+            # orthographic camera (no perspective foreshortening)
+            ax.set_proj_type('ortho')
+
+            # ---- minimal styling ----
+            ax.set_axis_off()
+            ax.grid(False)
+            ax.set_facecolor((1,1,1,0))   # transparent panes
+            fig.patch.set_alpha(0)
+            plt.tight_layout(pad=0)
             plt.show()
 
     @staticmethod
@@ -245,7 +317,7 @@ class Geometry:
             return np.empty((0, 2)) # always edge
 
     @staticmethod
-    def from_txt(fname: str) -> "Geometry":
+    def from_txt(fname: str, plot_from_txt: bool = True) -> "Geometry":
         """Reads from a .txt file and returns a Geometry object. Uses the same convention as the Matlab version."""
 
         def process_temp_array(header_index):
@@ -301,7 +373,7 @@ class Geometry:
 
         process_temp_array(cur_h)  # Process last collected data
 
-        return Geometry(*params)
+        return Geometry(*params, plot_from_txt=plot_from_txt)
 
     @staticmethod
     def __separate_joint_edges(triangles: np.ndarray, edges: np.ndarray):

@@ -27,8 +27,9 @@ import numpy as np
 import pandas as pd
 
 
-A_MAIN_LIST_DEFAULT = [4e-3, 6e-3, 8e-3, 10e-3, 12e-3]
-FREQ_LIST_DEFAULT   = [0.7, 1.0, 1.3, 1.6, 1.9]
+# A_MAIN_LIST_DEFAULT = [4e-3, 6e-3, 8e-3, 10e-3, 12e-3]
+A_MAIN_LIST_DEFAULT = [0.149848e-2, 0.280965e-2, 0.243503e-2, 0.224772e-2, 0.18731e-2] # from experiments pepper0
+FREQ_LIST_DEFAULT   = [1.3]
 
 
 def load_run_module(script_path: Path):

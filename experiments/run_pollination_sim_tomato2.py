@@ -219,18 +219,16 @@ def run_simulation(
 ):
     # --- Geometry / materials / sim params ---
     geom = dismech.GeomParams(
-        rod_r0=0.059,
-        shell_h=0.0,
+    rod_r0=0.03,
+    shell_h=0.0,
     )
 
     material = dismech.Material(
-        # density=1100,
-        density=800,
-        # youngs_rod=2.16e7,
-        youngs_rod=1.57e7,
+        density=1500,
+        youngs_rod=3.16e7,
         youngs_shell=0,
         poisson_rod=0.5,
-        poisson_shell=0,
+        poisson_shell=0
     )
 
     dyn_sim = dismech.SimParams(

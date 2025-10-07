@@ -213,7 +213,7 @@ def run_simulation(
     plant_name: str = "tomato2",
     position: str = "3",
     A_main: float = 4e-3,
-    freq: float = 1.6,
+    freq: float = 1.3,
     flower_node: int = 73,
     dt: float = 1e-2,
 ):
@@ -224,8 +224,8 @@ def run_simulation(
     )
 
     material = dismech.Material(
-        density=1500,
-        youngs_rod=3.16e7,
+        density=1100,
+        youngs_rod=2.16e7,
         youngs_shell=0,
         poisson_rod=0.5,
         poisson_shell=0

@@ -6,8 +6,9 @@ Batch runner for run_pollination_sim.py
 Sweeps A_main and freq over predefined grids (or CLI overrides),
 calls run_simulation() from run_pollination_sim, and saves:
   - amp_x_flower_hilbert_matrix.csv
+  - amp_x_flower_peak_matrix.csv   # NEW
   - f_est_matrix.csv
-  - results_summary.xlsx  (two sheets)
+  - results_summary.xlsx  (three sheets: hilbert, peak, f_est)
 
 Usage:
     python batch_run_from_script.py \
@@ -28,7 +29,12 @@ import pandas as pd
 
 
 # A_MAIN_LIST_DEFAULT = [4e-3, 6e-3, 8e-3, 10e-3, 12e-3]
-A_MAIN_LIST_DEFAULT = [0.149848e-2, 0.280965e-2, 0.243503e-2, 0.224772e-2, 0.18731e-2] # from experiments pepper0
+
+# A_MAIN_LIST_DEFAULT = [0.37462e-2, 0.337158e-2, 0.487006e-2, 0.18731e-2, 0.262234e-2] # from experiments tomato2
+# A_MAIN_LIST_DEFAULT = [0.149848e-2, 0.280965e-2, 0.243503e-2, 0.224772e-2, 0.18731e-2] # from experiments pepper0
+
+# A_MAIN_LIST_DEFAULT = [2.032e-3, 2.794e-3, 3.683e-3, 4.572e-3, 5.715e-3] # from experiments tomato2
+A_MAIN_LIST_DEFAULT = [0.251351351e-2, 0.293243243e-2, 0.343513514e-2, 0.402162162e-2, 0.519459459e-2] # from experiments pepper0
 FREQ_LIST_DEFAULT   = [1.3]
 
 
@@ -70,12 +76,13 @@ def main():
     F_vals = FREQ_LIST_DEFAULT if not args.f_list else json.loads(args.f_list)
 
     # Results matrices
-    amp_df = pd.DataFrame(index=F_vals, columns=A_vals, dtype=float)
-    f_df   = pd.DataFrame(index=F_vals, columns=A_vals, dtype=float)
+    amp_df       = pd.DataFrame(index=F_vals, columns=A_vals, dtype=float)
+    amp_peak_df  = pd.DataFrame(index=F_vals, columns=A_vals, dtype=float)  # NEW
+    f_df         = pd.DataFrame(index=F_vals, columns=A_vals, dtype=float)
     amp_df.index.name = "freq"
+    amp_peak_df.index.name = "freq"  # NEW
     f_df.index.name = "freq"
 
-    # Sweep
     # Sweep with retry-on-failure (shrink dt)
     for f in F_vals:
         for A in A_vals:
@@ -93,41 +100,51 @@ def main():
                         A_main=float(A),
                         freq=float(f),
                         flower_node=int(args.flower_node),
-                        dt=dt_try,  # << pass dt
+                        dt=dt_try,  # pass dt
                     )
-                    amp_df.at[f, A] = result.get("amp_x_flower_hilbert", np.nan)
-                    f_df.at[f, A]   = result.get("f_est", np.nan)
-                    print(f"  -> SUCCESS (dt_used={result.get('dt_used', dt_try)}): "
-                        f"amp_x_flower_hilbert={amp_df.at[f, A]}, f_est={f_df.at[f, A]}")
+                    amp_df.at[f, A]      = result.get("amp_x_flower_hilbert", np.nan)
+                    amp_peak_df.at[f, A] = result.get("amp_x_flower_peak", np.nan)  # NEW
+                    f_df.at[f, A]        = result.get("f_est", np.nan)
+                    print(
+                        f"  -> SUCCESS (dt_used={result.get('dt_used', dt_try)}): "
+                        f"hilbert={amp_df.at[f, A]}, peak={amp_peak_df.at[f, A]}, f_est={f_df.at[f, A]}"
+                    )
                     success = True
                     break
                 except Exception as e:
                     last_err = e
                     tried += 1
-                    # shrink dt and retry
-                    dt_try *= float(args.dt_factor)
-                    print(f"  -> FAIL (attempt {tried}): {e}\n"
-                        f"     Retrying with smaller dt={dt_try} ...")
+                    dt_try *= float(args.dt_factor)  # shrink dt and retry
+                    print(
+                        f"  -> FAIL (attempt {tried}): {e}\n"
+                        f"     Retrying with smaller dt={dt_try} ..."
+                    )
 
             if not success:
-                # give up on this (A,f); record NaNs so you can see gaps in the grid
-                amp_df.at[f, A] = np.nan
-                f_df.at[f, A]   = np.nan
-                print(f"  -> GAVE UP for A_main={A}, freq={f} after {tried} attempts. "
-                    f"Last error: {last_err}")
+                # record NaNs so gaps are visible
+                amp_df.at[f, A]      = np.nan
+                amp_peak_df.at[f, A] = np.nan  # NEW
+                f_df.at[f, A]        = np.nan
+                print(
+                    f"  -> GAVE UP for A_main={A}, freq={f} after {tried} attempts. "
+                    f"Last error: {last_err}"
+                )
 
     # Save CSVs
-    amp_csv = outdir / "amp_x_flower_hilbert_matrix.csv"
-    f_csv   = outdir / "f_est_matrix.csv"
+    amp_csv       = outdir / "amp_x_flower_hilbert_matrix.csv"
+    amp_peak_csv  = outdir / "amp_x_flower_peak_matrix.csv"   # NEW
+    f_csv         = outdir / "f_est_matrix.csv"
     amp_df.to_csv(amp_csv, float_format="%.10g")
+    amp_peak_df.to_csv(amp_peak_csv, float_format="%.10g")     # NEW
     f_df.to_csv(f_csv, float_format="%.10g")
-    print(f"Saved CSVs:\n  {amp_csv}\n  {f_csv}")
+    print(f"Saved CSVs:\n  {amp_csv}\n  {amp_peak_csv}\n  {f_csv}")
 
-    # Save Excel with two sheets
+    # Save Excel with three sheets
     xlsx = outdir / "results_summary.xlsx"
     with pd.ExcelWriter(xlsx, engine="openpyxl") as writer:
-        amp_df.to_excel(writer, sheet_name="amp_x_flower_hilbert")
-        f_df.to_excel(writer,   sheet_name="f_est")
+        amp_df.to_excel(writer,       sheet_name="amp_x_flower_hilbert")
+        amp_peak_df.to_excel(writer,  sheet_name="amp_x_flower_peak")  # NEW
+        f_df.to_excel(writer,         sheet_name="f_est")
     print(f"Saved Excel summary: {xlsx}")
 
 

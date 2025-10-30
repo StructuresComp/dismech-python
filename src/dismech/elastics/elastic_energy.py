@@ -25,7 +25,7 @@ class ElasticEnergy(metaclass=PostInitABCMeta):
         """
         Args:
             springs (Springs): Springs object containing fixed indices and mutable nat_strain and inc_strain.
-            initial_state (RobotState): State associated with nat_strain.
+            initial_state (RobotState): State associated with nat_strain by default.
         """
         self._springs = springs
         self._n_K = 1 if self.K.ndim == 1 else self.K.shape[1]
@@ -72,14 +72,8 @@ class ElasticEnergy(metaclass=PostInitABCMeta):
         return np.sum(energy) if output_scalar else energy
 
     def grad_hess_energy_linear_elastic(self, state: RobotState, sparse: bool = False) -> typing.Tuple[np.ndarray, np.ndarray] | typing.Tuple[np.ndarray, sp.csr_array]:
-        
-        # theta = self.get_strain(state)
-        # theta_nat = self._springs.nat_strain
-        # theta_inc = self._springs.inc_strain
-        # theta_bar = theta_nat + theta_inc
-        # del_theta = theta - theta_bar
-
-        # print("theta - theta_bar (Δθ) min/max: ", np.min(del_theta), np.max(del_theta))
+        """Compute gradient and Hessian of elastic energy as a function of strain.
+          Uses the chain rule to get derivative wrt dofs."""
         
         del_strain = self._get_del_strain(state)
         grad_strain, hess_strain = self.grad_hess_strain(state)
@@ -87,7 +81,7 @@ class ElasticEnergy(metaclass=PostInitABCMeta):
         K = self.K.reshape(-1, self._n_K)
         gradE_strain = K * del_strain
 
-        # Ensure correct shape
+        # Ensure correct shape (different for scalar vs vectorial K (rod bending))
         gradE_strain = gradE_strain.reshape(-1, self._n_K)
         grad_strain = grad_strain.reshape(-1, grad_strain.shape[1], self._n_K)
         hess_strain = hess_strain.reshape(

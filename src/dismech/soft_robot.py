@@ -32,7 +32,7 @@ class SoftRobot:
         self._init_springs(geo)
         self.__mass_matrix = self._get_mass_matrix(geom, material)
 
-        # Contact
+        # Contact pair initialization
         self.__edge_combos = construct_edge_combinations(
             np.concatenate((geo.rod_edges, geo.rod_shell_joint_edges)
                            ) if geo.rod_shell_joint_edges.size else geo.rod_edges
@@ -117,6 +117,7 @@ class SoftRobot:
 
     def _init_springs(self, geo: Geometry):
         """Initialize spring list objects"""
+        # Stretch springs
         n_rod = geo.rod_stretch_springs.shape[0]
         n_shell = geo.shell_stretch_springs.shape[0]
 
@@ -129,7 +130,7 @@ class SoftRobot:
         self.__stretch_springs = StretchSprings.from_arrays(
             nodes_ind, ref_len, EA, self.map_node_to_dof)
 
-        # Bend/twist spring
+        # Bend/twist springs
         n_bt_springs = geo.bend_twist_springs.shape[0]
         EI = np.tile(np.array([self.__EI1, self.__EI2]),
                      n_bt_springs).reshape(-1, 2)
@@ -170,7 +171,8 @@ class SoftRobot:
                                                                                     self.__init_cs,
                                                                                     self.__init_xis)
             ]
-            self.__shell_hinge_springs = []
+            self.__shell_hinge_springs = HingeSprings(0, self.map_node_to_dof) # Empty hinge springs
+
         else:
             # Hinge springs
             kb = np.full(geo.hinges.shape[0], self.__kb)
@@ -201,7 +203,7 @@ class SoftRobot:
             node_dofs = np.arange(3 * self.__n_nodes).reshape(-1, 3)
             mass[node_dofs] += dm_nodes[:, None]
 
-        # Edge contributions
+        # Edge contributions (moment of inertia)
         if self.__n_edges_dof:
             if geom.axs is not None:
                 dm_edges = self.__ref_len[:self.__n_edges_dof] * \

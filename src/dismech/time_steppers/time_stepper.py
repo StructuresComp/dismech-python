@@ -9,7 +9,7 @@ from ..soft_robot import SoftRobot
 from ..state import RobotState
 from ..elastics import ElasticEnergy, StretchEnergy, HingeEnergy, BendEnergy, TriangleEnergy, TwistEnergy
 from ..external_forces import compute_gravity_forces, compute_aerodynamic_forces_vectorized, compute_ground_contact, compute_ground_contact_friction, compute_rft, compute_damping_force, compute_surface_viscous_drag, compute_thrust_force_and_jacobian
-from ..external_forces import predictor_step_for_ground_contact, corrector_step_for_ground_contact
+# from ..external_forces import predictor_step_for_ground_contact, corrector_step_for_ground_contact
 from ..solvers import Solver, NumpySolver, PardisoSolver
 from ..visualizer import Visualizer
 from ..contact import IMCEnergy, ShellContactEnergy
@@ -52,8 +52,8 @@ class TimeStepper(metaclass=abc.ABCMeta):
                     robot.twist_springs, robot.state)
 
         if "selfContact" in robot.env.ext_force_list:
-            #self._contact_energy = IMCEnergy(robot.contact_pairs, robot.env.delta, robot.env.h, robot.env.imc_stiffness)
-            self._contact_energy = ShellContactEnergy(robot.tri_contact_pairs, robot.env.delta, robot.env.h, robot.env.imc_stiffness, None, True)
+            self._contact_energy = IMCEnergy(robot.contact_pairs, robot.env.delta, robot.env.h, robot.env.imc_stiffness)
+            # self._contact_energy = ShellContactEnergy(robot.tri_contact_pairs, robot.env.delta, robot.env.h, robot.env.imc_stiffness, None, True)
             # self._contact_energy = ShellContactEnergy(robot.tri_contact_pairs, robot.env.delta, robot.env.h, None, False)
 
         # Set solver
@@ -63,7 +63,7 @@ class TimeStepper(metaclass=abc.ABCMeta):
         # Simulate callbacks
         self.before_step = None
 
-    def simulate(self, robot: SoftRobot = None, viz: Visualizer = None) -> typing.List[SoftRobot]:
+    def simulate(self, robot: SoftRobot = None, viz: Visualizer = None) -> typing.Tuple[typing.List[SoftRobot], typing.List[float], typing.List[float]]:
         robot = robot or self.robot
         steps = int(robot.sim_params.total_time / robot.sim_params.dt) + 1
 
@@ -71,23 +71,40 @@ class TimeStepper(metaclass=abc.ABCMeta):
             viz.update(robot, 0)
 
         ret = []
-        for i in range(1, steps):
+        f_norms = []
+        time_array = []
+        i=0
+        t=0.0
+        time_array.append(t)
+        ret.append(robot)
+        while t < robot.sim_params.total_time:
             # Handle user function
             if self.before_step is not None:
                 robot = self.before_step(robot, i * robot.sim_params.dt)
-            robot = self.step(robot)
+            
+            try:
+                robot, f_norm = self.step(robot)
+            except Exception as e:
+                print("Error occurred during simulation step:", e)
+                robot.sim_params.dt *= 0.1
+                print("Reducing time step to:", robot.sim_params.dt)
+                robot, f_norm = self.step(robot)
 
             # Update on step interval
             if viz is not None and i % robot.sim_params.plot_step == 0:
-                viz.update(robot, i * robot.sim_params.dt)
+                viz.update(robot, t)
             if robot.sim_params.log_data and i % robot.sim_params.log_step == 0:
                 ret.append(robot)
+                f_norms.append(f_norm)
+            i += 1
+            t += robot.sim_params.dt
+            time_array.append(t)
 
             # print current time
-            print("current_time: ", i*robot.sim_params.dt)
-        return ret
+            print("current_time: ", t)
+        return ret, time_array, f_norms
 
-    def step(self, robot: SoftRobot = None, debug: bool = True) -> SoftRobot:
+    def step(self, robot: SoftRobot = None, debug: bool = True) -> typing.Tuple[SoftRobot, float]:
         robot = robot or self.robot
 
         # Initialize iteration variables
@@ -147,10 +164,6 @@ class TimeStepper(metaclass=abc.ABCMeta):
             else:
                 dq_free = self._solver.solve(j_free, f_free)
 
-            # if iteration > 20:
-            #     # Decrease time step if the system is not converging
-            #     robot.sim_params.dt = self.original_dt * 0.1
-
             # Adaptive damping and update
             if iteration > robot.sim_params.line_search_iters:
                 if robot.sim_params.use_line_search:
@@ -181,104 +194,8 @@ class TimeStepper(metaclass=abc.ABCMeta):
 
         # Final update and return
         self.robot = self._finalize_update(robot, q)
-        return self.robot
-
-    # def step(self, robot: SoftRobot = None, debug: bool = True) -> SoftRobot:
-    #     robot = robot or self.robot
-
-    #     use_pc = getattr(robot.sim_params, "use_predictor_corrector_for_ground_contact", False)
-    #     vert_nodes = np.array([], dtype=int)  # will be set by predictor if used
-
-    #     # we allow up to 2 passes when use_pc=True
-    #     pass_idx = 0
-    #     while True:
-    #         pass_idx += 1
-    #         # ---------- Newton solve for this pass ----------
-    #         q = copy.deepcopy(robot.state.q)
-    #         alpha = 1.0
-    #         iteration = 1
-    #         err_history = []
-    #         solved = False
-
-    #         ndof_diag = np.arange(q.shape[0])
-
-    #         while not solved:
-    #             q_eval = self._compute_evaluation_position(robot, q)
-    #             u_eval = self._compute_evaluation_velocity(robot, q)
-
-    #             # Build F, J exactly as in your original code
-    #             F = np.zeros(q.shape[0])
-    #             if robot.sim_params.sparse:
-    #                 J = sp.csr_matrix((q.shape[0], q.shape[0]), dtype=np.float64)
-    #             else:
-    #                 J = np.zeros((q.shape[0], q.shape[0]))
-
-    #             if not robot.sim_params.static_sim:
-    #                 inertial_force, inertial_jacobian = self._compute_inertial_force_and_jacobian(robot, q)
-    #                 F += inertial_force
-    #                 if robot.sim_params.sparse:
-    #                     J += sp.diags(inertial_jacobian, format='csr')
-    #                 else:
-    #                     J[ndof_diag, ndof_diag] += inertial_jacobian
-
-    #             F, J = self._compute_forces_and_jacobian(F, J, robot, q_eval, u_eval, iteration == 1)
-
-    #             f_free = F[robot.state.free_dof]
-    #             if robot.sim_params.sparse:
-    #                 j_free = J[robot.state.free_dof, :][:, robot.state.free_dof]
-    #             else:
-    #                 j_free = J[np.ix_(robot.state.free_dof, robot.state.free_dof)]
-
-    #             dq_free = np.zeros_like(f_free) if np.linalg.norm(f_free) < self._min_force \
-    #                     else self._solver.solve(j_free, f_free)
-
-    #             if iteration > robot.sim_params.line_search_iters:
-    #                 if robot.sim_params.use_line_search:
-    #                     alpha_orig = alpha
-    #                     alpha = self._line_search(robot, q, dq_free, f_free, j_free)
-    #                     if alpha <= 0.0:
-    #                         alpha = self._adaptive_damping(alpha_orig)
-    #                 else:
-    #                     alpha = self._adaptive_damping(alpha)
-
-    #             dq_free *= alpha
-    #             q[robot.state.free_dof] -= dq_free
-
-    #             err = np.linalg.norm(f_free)
-    #             err_history.append(err)
-    #             solved = self._converged(err, err_history, dq_free, iteration, robot)
-    #             if debug:
-    #                 print(f"iter: {iteration}, error: {err:.3f}")
-    #             iteration += 1
-
-    #         if iteration >= robot.sim_params.max_iter:
-    #             raise ValueError("Iteration limit reached before convergence")
-
-    #         # ---------- commit logic depending on flag ----------
-    #         if not use_pc:
-    #             # normal single-pass
-    #             self.robot = self._finalize_update(robot, q)
-    #             return self.robot
-
-    #         # predictor-corrector path
-    #         if pass_idx == 1:
-    #             # run predictor on converged trial q
-    #             robot_pred, revert, vert_nodes = predictor_step_for_ground_contact(robot, q)
-    #             if revert:
-    #                 # predictor imposed vertical constraints and projected q0 and q
-    #                 robot = robot_pred
-    #                 # restart second pass from the projected state
-    #                 continue
-    #             else:
-    #                 # no contact → finalize
-    #                 self.robot = self._finalize_update(robot, q)
-    #                 return self.robot
-    #         else:
-    #             # second pass with vertical constraints active → run corrector
-    #             robot_corr = corrector_step_for_ground_contact(robot, q, vert_nodes)
-    #             self.robot = self._finalize_update(robot_corr, q)
-    #             return self.robot
-
+        self.f_norm = np.linalg.norm(f_free)
+        return self.robot, self.f_norm
 
     @abc.abstractmethod
     def _compute_inertial_force_and_jacobian(self, robot: SoftRobot, q: np.ndarray) -> typing.Tuple[np.ndarray, np.ndarray]:

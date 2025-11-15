@@ -6,7 +6,7 @@ import numpy as np
 
 from .state import RobotState
 from .stiffness import compute_rod_stiffness, compute_shell_stiffness
-from .frame_util import compute_reference_twist, compute_tfc_midedge, parallel_transport, construct_edge_combinations, construct_triangle_combinations
+from .frame_util import compute_reference_twist, compute_tfc_midedge, parallel_transport, construct_edge_combinations, construct_triangle_combinations, construct_edge_pairs_with_min_gap
 from .environment import Environment
 from .geometry import Geometry
 from .params import GeomParams, Material, SimParams
@@ -32,8 +32,12 @@ class SoftRobot:
         self._init_springs(geo)
         self.__mass_matrix = self._get_mass_matrix(geom, material)
 
-        # Contact pair initialization
-        self.__edge_combos = construct_edge_combinations(
+        # # Contact pair initialization
+        # self.__edge_combos = construct_edge_combinations(
+        #     np.concatenate((geo.rod_edges, geo.rod_shell_joint_edges)
+        #                    ) if geo.rod_shell_joint_edges.size else geo.rod_edges
+        # )
+        self.__edge_combos = construct_edge_pairs_with_min_gap(
             np.concatenate((geo.rod_edges, geo.rod_shell_joint_edges)
                            ) if geo.rod_shell_joint_edges.size else geo.rod_edges
         )
@@ -117,6 +121,7 @@ class SoftRobot:
 
     def _init_springs(self, geo: Geometry):
         """Initialize spring list objects"""
+        
         # Stretch springs
         n_rod = geo.rod_stretch_springs.shape[0]
         n_shell = geo.shell_stretch_springs.shape[0]
@@ -172,7 +177,6 @@ class SoftRobot:
                                                                                     self.__init_xis)
             ]
             self.__shell_hinge_springs = HingeSprings(0, self.map_node_to_dof) # Empty hinge springs
-
         else:
             # Hinge springs
             kb = np.full(geo.hinges.shape[0], self.__kb)
@@ -627,3 +631,7 @@ class SoftRobot:
     def mass_matrix(self) -> np.ndarray:
         """Diagonal mass matrix (n_dof, n_dof)"""
         return self.__mass_matrix.view()
+    
+    @property
+    def edge_combos(self):
+        return self.__edge_combos

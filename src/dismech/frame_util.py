@@ -194,6 +194,42 @@ def construct_edge_combinations(edges: np.ndarray) -> np.ndarray:
     valid = np.column_stack((i[mask], j[mask]))
     return np.hstack((edges[valid[:, 0]], edges[valid[:, 1]]))
 
+def construct_edge_pairs_with_min_gap(edges: np.ndarray, k: int=3) -> np.ndarray:
+    """
+    Construct edge pairs (e_i, e_j) such that the edges are at least k edges apart
+    in the edges array (assumed consecutive like [1,2], [2,3], [3,4], ...).
+
+    Parameters
+    ----------
+    edges : (N, 2) ndarray
+        Array of edges, assumed ordered consecutively along the rod.
+    k : int
+        Minimum index gap between edges. Only pairs with j - i >= k are kept.
+
+    Returns
+    -------
+    pairs : (M, 4) ndarray
+        Each row is [edge_i_node1, edge_i_node2, edge_j_node1, edge_j_node2].
+        If no valid pairs, returns an empty array with shape (0, 4).
+    """
+    n = edges.shape[0]
+    if n == 0:
+        return np.empty((0, 4), dtype=edges.dtype)
+
+    # All upper-triangular index pairs (i < j)
+    i, j = np.triu_indices(n, k=1)
+
+    # Keep only those with a gap of at least k
+    mask = (j - i) >= k
+    i_valid = i[mask]
+    j_valid = j[mask]
+
+    if i_valid.size == 0:
+        return np.empty((0, 4), dtype=edges.dtype)
+
+    # Stack edges: [e_i0, e_i1, e_j0, e_j1]
+    return np.hstack((edges[i_valid], edges[j_valid]))
+
 def construct_triangle_combinations(triangles: np.ndarray) -> np.ndarray:
     n = triangles.shape[0]
     if n == 0:

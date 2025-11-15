@@ -38,6 +38,7 @@ class ContactEnergy(metaclass=abc.ABCMeta):
 
     def __init__(self, pairs: List[ContactPair], delta: float, h: float, k_1: float, stiffness: float, scale: bool = True):
         self._pairs = np.vstack([p.pair_nodes for p in pairs])
+        self.original_k_scalar = stiffness
         self.k_c = stiffness
         self._ind = np.vstack([p.ind for p in pairs])   # total inds, mask during first iter
         if scale:
@@ -98,6 +99,8 @@ class ContactEnergy(metaclass=abc.ABCMeta):
             self.ind = self._ind[first_Delta < 2 * self.norm_h + self.norm_delta * 10]
             self.pairs = self._pairs[first_Delta < 2 * self.norm_h + self.norm_delta * 10]
 
+            # self.get_contact_stiffness(robot, F)
+
         if self.ind.size == 0:
             n_dof = q.shape[0]
             return np.zeros(n_dof), np.zeros((n_dof, n_dof))
@@ -126,13 +129,15 @@ class ContactEnergy(metaclass=abc.ABCMeta):
         # return Fs, Js
         return Fs, Js
     
-    def get_contact_stiffness(self, robot, F: np.ndarray):
+    def get_contact_stiffness(self, robot, F: np.ndarray, ):
+        ratio = 0.9
         if np.sum(np.abs(F)) < 1e-9:
-            return np.ones(self.pairs.shape[0]) * 100
+            return
         valid_dofs = robot.map_node_to_dof(
             self.pairs)
         force_per_stencil = np.max(np.linalg.norm(F[valid_dofs], axis=2))
-        return force_per_stencil * 1e5
+        self.k_c = ratio*self.k_c + (1 - ratio) * force_per_stencil * self.original_k_scalar
+        return
 
     @abc.abstractmethod
     def get_Delta(self, q):

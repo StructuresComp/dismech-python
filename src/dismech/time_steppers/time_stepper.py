@@ -12,7 +12,7 @@ from ..external_forces import compute_gravity_forces, compute_aerodynamic_forces
 # from ..external_forces import predictor_step_for_ground_contact, corrector_step_for_ground_contact
 from ..solvers import Solver, NumpySolver, PardisoSolver
 from ..visualizer import Visualizer
-from ..contact import IMCEnergy, ShellContactEnergy
+from ..contact import IMCEnergy, ShellContactEnergy, IMCFrictionEnergy
 
 _SOLVERS: typing.Dict[str, Solver] = {
     'np': NumpySolver, 'pardiso': PardisoSolver}
@@ -55,6 +55,11 @@ class TimeStepper(metaclass=abc.ABCMeta):
             self._contact_energy = IMCEnergy(robot.contact_pairs, robot.env.delta, robot.env.h, robot.env.imc_stiffness)
             # self._contact_energy = ShellContactEnergy(robot.tri_contact_pairs, robot.env.delta, robot.env.h, robot.env.imc_stiffness, None, True)
             # self._contact_energy = ShellContactEnergy(robot.tri_contact_pairs, robot.env.delta, robot.env.h, None, False)
+
+        if "selfFriction" in robot.env.ext_force_list:
+            self._imc_friction = IMCFrictionEnergy(robot.contact_pairs, robot.env.delta, robot.env.h, \
+                                                   robot.sim_params.dt, robot.env.vel_tol, robot.env.mu, robot.env.imc_stiffness\
+                                                   )
 
         # Set solver
         # TODO: figure out how to pass parameters
@@ -272,8 +277,11 @@ class TimeStepper(metaclass=abc.ABCMeta):
             forces -= F
             jacobian -= J
         if "selfContact" in robot.env.ext_force_list:
-            F, J = self._contact_energy.grad_hess_energy(new_state, robot, forces, first_iter)
-            #F, J = self._contact_energy.grad_hess_energy(q)
+            Fcon, Jcon = self._contact_energy.grad_hess_energy(new_state, robot, forces, first_iter)
+            forces -= Fcon
+            jacobian -= Jcon
+        if "selfFriction" in robot.env.ext_force_list:
+            F = self._imc_friction.grad_friction(new_state, robot, forces, first_iter)
             forces -= F
             jacobian -= J
 

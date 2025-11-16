@@ -30,7 +30,8 @@ class Environment:
             self.h = kwargs['h']
             self.imc_stiffness = kwargs['kc']
         elif key == 'selfFriction':
-            pass
+            self.mu = kwargs['mu']
+            self.vel_tol = kwargs['vel_tol']
         elif key == 'floorContact':
             self.ground_z = kwargs['ground_z']
             self.ground_stiffness = kwargs['stiffness']

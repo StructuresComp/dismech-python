@@ -106,10 +106,10 @@ class TimeStepper(metaclass=abc.ABCMeta):
             time_array.append(t)
 
             # print current time
-            print("current_time: ", t)
+            #print("current_time: ", t)
         return ret, time_array, f_norms
 
-    def step(self, robot: SoftRobot = None, debug: bool = True) -> typing.Tuple[SoftRobot, float]:
+    def step(self, robot: SoftRobot = None, debug: bool = False) -> typing.Tuple[SoftRobot, float]:
         robot = robot or self.robot
 
         # Initialize iteration variables

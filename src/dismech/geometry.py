@@ -239,7 +239,7 @@ class Geometry:
             ax.set_axis_off()
             ax.grid(False)
 
-            plt.show()
+            #plt.show()
 
 
     @staticmethod

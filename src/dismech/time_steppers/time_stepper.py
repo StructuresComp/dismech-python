@@ -87,13 +87,13 @@ class TimeStepper(metaclass=abc.ABCMeta):
             if self.before_step is not None:
                 robot = self.before_step(robot, i * robot.sim_params.dt)
             
-            try:
-                robot, f_norm = self.step(robot)
-            except Exception as e:
+            #try:
+            robot, f_norm = self.step(robot)
+            """except Exception as e:
                 print("Error occurred during simulation step:", e)
                 robot.sim_params.dt *= 0.1
                 print("Reducing time step to:", robot.sim_params.dt)
-                robot, f_norm = self.step(robot)
+                robot, f_norm = self.step(robot)"""
 
             # Update on step interval
             if viz is not None and i % robot.sim_params.plot_step == 0:

@@ -5,8 +5,13 @@ import numpy as np
 import dismech
 
 @tool
-def contortion(dt: float) -> str:
-    """Simulate contortion with provided dt and get residual error of each time step."""
+def contortion(dt0: float, dt1: float, t_transition: float) -> str:
+    """
+    Simulate contortion with provided dt and get residual error of each time step.
+    dt0 is the initial time step and dt1 is the time step after t'>t_transition.
+    Returns 'error' if we fail to converge.
+    """
+    print(dt0, dt1, t_transition)
     
     # Move all initialization inside the function
     geom = dismech.GeomParams(rod_r0=0.001, shell_h=0)
@@ -23,7 +28,7 @@ def contortion(dt: float) -> str:
         show_floor=False,
         log_data=True,
         log_step=1,
-        dt=dt,  # Use the provided dt here
+        dt=dt0,  # Use the provided dt here
         max_iter=30,
         total_time=1.0,
         plot_step=1,
@@ -59,13 +64,19 @@ def contortion(dt: float) -> str:
             robot = robot.move_nodes(start_points, [u0 * robot.sim_params.dt, 0, 0])
         else:
             robot = robot.twist_edges([0, 1], w0 * robot.sim_params.dt)
+        if t > t_transition:
+            robot.sim_params.dt = dt1
         return robot
     
     stepper = dismech.ImplicitEulerTimeStepper(robot)
     stepper.before_step = move_and_twist
     
     # Run simulation
-    _, _, f_norms = stepper.simulate()
+    try:
+        _, _, f_norms = stepper.simulate()
+    except ValueError:
+        print(f"failed for dt0={dt0}, dt1={dt1}, t_transition={t_transition}")
+        return "error"
     return str(f_norms)
 
 
@@ -75,7 +86,7 @@ def get_agent():
     return create_agent(
         model="claude-sonnet-4-5-20250929",
         tools=[contortion],
-        system_prompt="You are a helpful assistant",
+        system_prompt="You are a helpful assistant. dt0=1e-2, dt1=1e-1, t=0.01 are good guesses. At max run 5 simulations before returning to the user.",
     )
 
 

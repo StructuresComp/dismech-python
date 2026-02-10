@@ -34,4 +34,4 @@ class NewmarkBetaTimeStepper(TimeStepper):
 
     def _compute_velocity(self, robot: SoftRobot, q: np.ndarray) -> np.ndarray:
         acceleration = self._compute_acceleration(robot, q)
-        return robot.state.u + self._dt * (self._one_minus_gamma * robot.state.a + self._gamma_dt * acceleration)
+        return robot.state.u + self._dt * (self._one_minus_gamma * robot.state.a + self._gamma * acceleration)

@@ -37,6 +37,8 @@ uv pip install -e . # automatically creates .venv
 - [x] Implicit integration schemes (Euler and Newmark-beta).
 - [x] Dense and sparse ([PyPardiso](https://pypi.org/project/pypardiso/)) solvers.
 - [x] Significant speedup for dynamic simulations.
+- [x] [IMC](https://arxiv.org/abs/2205.10309) rod contact and friction modeling.
+- [x] Shell contact and friction modeling.
 
 ![benchmarks](docs/benchmarks.png)
 
@@ -46,8 +48,6 @@ To run example experiments, please run the python notebooks located in experimen
 
 ## TODO
 
-- [ ] [IMC](https://arxiv.org/abs/2205.10309) rod contact and friction modeling.
-- [ ] Shell contact and friction modeling.
 - [ ] Sphinx documentation.
 - [ ] Slinky NN demonstration.
 

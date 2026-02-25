@@ -21,9 +21,9 @@ class Environment:
             self.cd = kwargs['cd']
         elif key == 'thrust':
             self.thrust_coeff = kwargs['thrust_coeff']
-        elif key == 'pointForce':
-            self.pt_force = kwargs['pt_force']
-            self.pt_force_node = kwargs['pt_force_node']
+        elif key == 'pointForces':
+            self.point_force_node_indices = kwargs['point_force_node_indices']
+            self.point_force_vectors = kwargs['point_force_vectors']
         # TODO: Translate the following forces
         elif key == 'selfContact':
             self.delta = kwargs['delta']

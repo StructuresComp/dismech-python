@@ -6,3 +6,4 @@ from .damping import compute_damping_force
 from .hydrodynamics import compute_surface_viscous_drag
 from .thrust import compute_thrust_force_and_jacobian
 from .predictor_corrector_ground_contact import predictor_step_for_ground_contact, corrector_step_for_ground_contact
+from .constant_point_force import add_point_forces

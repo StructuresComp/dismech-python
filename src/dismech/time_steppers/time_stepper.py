@@ -8,7 +8,7 @@ import numpy as np
 from ..soft_robot import SoftRobot
 from ..state import RobotState
 from ..elastics import ElasticEnergy, StretchEnergy, HingeEnergy, BendEnergy, TriangleEnergy, TwistEnergy
-from ..external_forces import compute_gravity_forces, compute_aerodynamic_forces_vectorized, compute_ground_contact, compute_ground_contact_friction, compute_rft, compute_damping_force, compute_surface_viscous_drag, compute_thrust_force_and_jacobian
+from ..external_forces import compute_gravity_forces, compute_aerodynamic_forces_vectorized, compute_ground_contact, compute_ground_contact_friction, compute_rft, compute_damping_force, compute_surface_viscous_drag, compute_thrust_force_and_jacobian, add_point_forces
 # from ..external_forces import predictor_step_for_ground_contact, corrector_step_for_ground_contact
 from ..solvers import Solver, NumpySolver, PardisoSolver
 from ..visualizer import Visualizer
@@ -284,6 +284,10 @@ class TimeStepper(metaclass=abc.ABCMeta):
             F = self._imc_friction.grad_friction(new_state, robot, forces, first_iter)
             forces -= F
             jacobian -= J
+        if "gravity" in robot.env.ext_force_list:
+            forces -= compute_gravity_forces(robot)
+        if "pointForces" in robot.env.ext_force_list:
+            forces -= add_point_forces(robot, robot.env.point_force_node_indices, robot.env.point_force_vectors)
 
         return forces, jacobian
 

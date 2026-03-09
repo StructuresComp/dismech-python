@@ -186,3 +186,13 @@ rawDataRod.txt
 rawDataShell.txt
 rodData.js
 shellData.js
+
+# DS Store
+.DS_Store
+
+# Other data or media or binary files
+*.js
+*.obj
+*.gif
+*.xls
+*.xlsx

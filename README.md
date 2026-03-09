@@ -40,7 +40,7 @@ uv pip install -e . # automatically creates .venv
 - [x] [IMC](https://arxiv.org/abs/2205.10309) rod contact and friction modeling.
 - [x] Shell contact and friction modeling.
 
-![benchmarks](docs/benchmarks.png)
+<!-- ![benchmarks](docs/benchmarks.png) -->
 
 ## Experiments
 
@@ -51,3 +51,16 @@ To run example experiments, please run the python notebooks located in experimen
 - [ ] Sphinx documentation.
 - [ ] Slinky NN demonstration.
 
+## Citation
+If our work has helped your research, please cite the following paper.
+```
+@misc{lahoti2025pydismechscalableefficientframework,
+      title={Py-DiSMech: A Scalable and Efficient Framework for Discrete Differential Geometry-Based Modeling and Control of Soft Robots}, 
+      author={Radha Lahoti and Ryan Chaiyakul and M. Khalid Jawed},
+      year={2025},
+      eprint={2512.09911},
+      archivePrefix={arXiv},
+      primaryClass={cs.RO},
+      url={https://arxiv.org/abs/2512.09911}, 
+}
+```

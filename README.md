@@ -5,7 +5,7 @@
 |![shellcantilever](docs/newmark_beta_shell_cantilever_5s.gif) Energy-conserving Newmark-beta ($\gamma=0.5$ $\beta=0.25$) integration. | ![rodcantilever](docs/implicit_midpoint_cantilever_30s.gif) Energy-conserving implicit midpoint integration. |
 
 
-A discrete differential geometry deformable structure simulator based on [Dismech](https://github.com/StructuresComp/dismech-rods).
+A discrete differential geometry based soft robot and deformable structure simulator.
 
 ## Setup
 
@@ -32,8 +32,7 @@ uv pip install -e . # automatically creates .venv
 
 - [x] 3D [discrete elastic rod](https://www.cs.columbia.edu/cg/pdfs/143-rods.pdf) stretching, bending and twisting.
 - [x] 3D discrete elastic shell hinge and mid-edge bending.
-- [x] Pytest numerical validation suite (compared against [Dismech Matlab](https://github.com/StructuresComp/dismech-matlab)).
-- [x] [Dismech Matlab](https://github.com/StructuresComp/dismech-matlab) compatabile input format.
+- [x] Pytest numerical validation suite.
 - [x] Implicit integration schemes (Euler and Newmark-beta).
 - [x] Dense and sparse ([PyPardiso](https://pypi.org/project/pypardiso/)) solvers.
 - [x] Significant speedup for dynamic simulations.
@@ -50,17 +49,3 @@ To run example experiments, please run the python notebooks located in experimen
 
 - [ ] Sphinx documentation.
 - [ ] Slinky NN demonstration.
-
-## Citation
-If our work has helped your research, please cite the following paper.
-```
-@misc{lahoti2025pydismechscalableefficientframework,
-      title={Py-DiSMech: A Scalable and Efficient Framework for Discrete Differential Geometry-Based Modeling and Control of Soft Robots}, 
-      author={Radha Lahoti and Ryan Chaiyakul and M. Khalid Jawed},
-      year={2025},
-      eprint={2512.09911},
-      archivePrefix={arXiv},
-      primaryClass={cs.RO},
-      url={https://arxiv.org/abs/2512.09911}, 
-}
-```

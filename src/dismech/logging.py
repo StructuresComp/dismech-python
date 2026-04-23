@@ -31,13 +31,13 @@ def logDataForRendering(dofs, time_array, softRobot, Nsteps, static_sim, mapNode
 
     # For dynamic case
     rod_data = np.zeros((n_rod_nodes * Nsteps, 4))
-    for i in range(Nsteps-1):
+    for i in range(Nsteps):
         for j in range(n_rod_nodes):
             rod_data[i * n_rod_nodes + j, 0] = dof_with_time[i, 0]
             rod_data[i * n_rod_nodes + j, 1:] = dof_with_time[i, 1 + mapNodetoDOF(j)]
 
     shell_data = np.zeros((3 * n_faces * Nsteps, 3))
-    for i in range(Nsteps-1):
+    for i in range(Nsteps):
         for j in range(n_faces):
             n1 = softRobot.face_nodes_shell[j, 0]
             n2 = softRobot.face_nodes_shell[j, 1]

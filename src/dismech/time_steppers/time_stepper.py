@@ -68,7 +68,7 @@ class TimeStepper(metaclass=abc.ABCMeta):
         # Simulate callbacks
         self.before_step = None
 
-    def simulate(self, robot: SoftRobot = None, viz: Visualizer = None) -> typing.Tuple[typing.List[SoftRobot], typing.List[float], typing.List[float]]:
+    def simulate(self, robot: SoftRobot = None, viz: Visualizer = None) -> typing.Tuple[typing.List[SoftRobot], typing.List[float], typing.List[float], typing.List[np.ndarray]]:
         robot = robot or self.robot
         steps = int(robot.sim_params.total_time / robot.sim_params.dt) + 1
 
@@ -78,22 +78,25 @@ class TimeStepper(metaclass=abc.ABCMeta):
         ret = []
         f_norms = []
         time_array = []
+        Fs = []
         i=0
         t=0.0
         time_array.append(t)
         ret.append(robot)
+        Fs.append(np.zeros_like(robot.state.q))
+
         while t < robot.sim_params.total_time:
             # Handle user function
             if self.before_step is not None:
                 robot = self.before_step(robot, i * robot.sim_params.dt)
             
             try:
-                robot, f_norm = self.step(robot)
+                robot, f_norm, F = self.step(robot)
             except Exception as e:
                 print("Error occurred during simulation step:", e)
                 robot.sim_params.dt *= 0.1
                 print("Reducing time step to:", robot.sim_params.dt)
-                robot, f_norm = self.step(robot)
+                robot, f_norm, F = self.step(robot)
 
             # Update on step interval
             if viz is not None and i % robot.sim_params.plot_step == 0:
@@ -101,15 +104,16 @@ class TimeStepper(metaclass=abc.ABCMeta):
             if robot.sim_params.log_data and i % robot.sim_params.log_step == 0:
                 ret.append(robot)
                 f_norms.append(f_norm)
+                Fs.append(F)
             i += 1
             t += robot.sim_params.dt
             time_array.append(t)
 
             # print current time
             print("current_time: ", t)
-        return ret, time_array, f_norms
+        return ret, time_array, f_norms, Fs
 
-    def step(self, robot: SoftRobot = None, debug: bool = True) -> typing.Tuple[SoftRobot, float]:
+    def step(self, robot: SoftRobot = None, debug: bool = True) -> typing.Tuple[SoftRobot, float, np.ndarray]:
         robot = robot or self.robot
 
         # Initialize iteration variables
@@ -149,7 +153,6 @@ class TimeStepper(metaclass=abc.ABCMeta):
             F, J = self._compute_forces_and_jacobian(
                 F, J, robot, q_eval, u_eval, iteration == 1)
 
-            
 
             # Handle free DOF components
             f_free = F[robot.state.free_dof]
@@ -200,7 +203,7 @@ class TimeStepper(metaclass=abc.ABCMeta):
         # Final update and return
         self.robot = self._finalize_update(robot, q)
         self.f_norm = np.linalg.norm(f_free)
-        return self.robot, self.f_norm
+        return self.robot, self.f_norm, F
 
     @abc.abstractmethod
     def _compute_inertial_force_and_jacobian(self, robot: SoftRobot, q: np.ndarray) -> typing.Tuple[np.ndarray, np.ndarray]:

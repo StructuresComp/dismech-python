@@ -634,4 +634,14 @@ class SoftRobot:
     
     @property
     def edge_combos(self):
-        return self.__edge_combos
+        return self.__edge_combos.view()
+    
+    @property
+    def stiffness(self):
+        return {
+            'EA': self.__EA,
+            'EI1': self.__EI1,
+            'EI2': self.__EI2,
+            'GJ': self.__GJ,
+        }   
+

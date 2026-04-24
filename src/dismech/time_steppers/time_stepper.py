@@ -287,8 +287,6 @@ class TimeStepper(metaclass=abc.ABCMeta):
             F = self._imc_friction.grad_friction(new_state, robot, forces, first_iter)
             forces -= F
             jacobian -= J
-        if "gravity" in robot.env.ext_force_list:
-            forces -= compute_gravity_forces(robot)
         if "pointForces" in robot.env.ext_force_list:
             forces -= add_point_forces(robot, robot.env.point_force_node_indices, robot.env.point_force_vectors)
 

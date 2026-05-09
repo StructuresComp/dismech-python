@@ -45,15 +45,21 @@ def prepare_raw_arrays(
     times: np.ndarray,
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, int]:
     n_nodes = (qs.shape[1] + 1) // 4
+    print(f"Detected {n_nodes} nodes from qs shape {qs.shape}")
 
     first_idx = 1
-    last_idx = min(n_nodes, qs.shape[0])
+    last_idx = min(3*n_nodes, qs.shape[0])
     if last_idx <= first_idx:
         raise ValueError("raw trajectory is too short after dropping the first force frame")
 
     q_filtered = qs[first_idx:last_idx]
     f_filtered = forces[first_idx:last_idx]
     t_filtered = times[first_idx:last_idx]
+
+    # print shapes for debugging
+    print(f"q_filtered shape: {q_filtered.shape}")
+    print(f"f_filtered shape: {f_filtered.shape}")
+    print(f"t_filtered shape: {t_filtered.shape}")
 
     positions = q_filtered[:, : 3 * n_nodes]
     positions_reshaped = positions.reshape(q_filtered.shape[0], n_nodes, 3)

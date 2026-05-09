@@ -32,8 +32,8 @@ class HingeSprings(Springs):
             # Easier to handle dimension expansion separately
             inds0 = np.vstack([dof_map_fn(n0) for n0 in nodes_ind[:, 0]])
             inds1 = np.vstack([dof_map_fn(n1) for n1 in nodes_ind[:, 1]])
-            inds2 = np.vstack([dof_map_fn(n1) for n1 in nodes_ind[:, 2]])
-            inds3 = np.vstack([dof_map_fn(n1) for n1 in nodes_ind[:, 3]])
+            inds2 = np.vstack([dof_map_fn(n2) for n2 in nodes_ind[:, 2]])
+            inds3 = np.vstack([dof_map_fn(n3) for n3 in nodes_ind[:, 3]])
             instance.ind = np.hstack([inds0, inds1, inds2, inds3])
 
         return instance

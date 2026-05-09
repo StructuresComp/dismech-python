@@ -7,3 +7,4 @@ from .animation import get_animation, get_interactive_animation_plotly, Animatio
 from .elastics import BendEnergy, StretchEnergy, TriangleEnergy, HingeEnergy
 from .visualizer import MatplotlibLogger
 from .contact import IMCEnergy, IMCFrictionEnergy, ContactPair, ShellContactEnergy
+from .visuoshell import VisuoShellForceEstimator

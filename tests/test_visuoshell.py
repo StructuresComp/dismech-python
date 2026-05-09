@@ -27,6 +27,54 @@ def test_visuoshell_reference_shape_has_zero_elastic_force():
     assert estimator.energy_value(nodes) == 0.0
 
 
+def test_visuoshell_midedge_reference_shape_has_zero_elastic_force():
+    nodes = np.array(
+        [
+            [0.0, 0.0, 1.0],
+            [1.0, 0.0, 0.0],
+            [-1.0, 0.0, 0.0],
+            [0.0, 1.0, 0.0],
+            [0.0, -1.0, 0.2],
+        ]
+    )
+
+    estimator = VisuoShellForceEstimator.from_reference_points(
+        nodes,
+        kb=3.0,
+        use_midedge=True,
+    )
+
+    assert estimator.use_midedge
+    assert len(estimator.springs) == estimator.triangles.shape[0]
+    assert np.allclose(estimator.elastic_force(nodes), 0.0)
+    assert estimator.energy_value(nodes) == 0.0
+
+
+def test_visuoshell_midedge_deformed_shape_has_finite_elastic_force():
+    nodes = np.array(
+        [
+            [0.0, 0.0, 1.0],
+            [1.0, 0.0, 0.0],
+            [-1.0, 0.0, 0.0],
+            [0.0, 1.0, 0.0],
+            [0.0, -1.0, 0.2],
+        ]
+    )
+    deformed = nodes.copy()
+    deformed[0, 2] += 0.2
+
+    estimator = VisuoShellForceEstimator.from_reference_points(
+        nodes,
+        kb=3.0,
+        use_midedge=True,
+    )
+    elastic_force = estimator.elastic_force(deformed)
+
+    assert np.all(np.isfinite(elastic_force))
+    assert np.linalg.norm(elastic_force) > 0
+    assert np.allclose(estimator.external_balance_force(deformed), -elastic_force)
+
+
 def test_visuoshell_external_balance_force_is_negative_elastic_force():
     nodes = np.array(
         [

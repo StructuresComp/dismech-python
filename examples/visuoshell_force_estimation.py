@@ -17,6 +17,8 @@ def main():
     parser.add_argument("--output", type=pathlib.Path, default=pathlib.Path("forces.txt"))
     parser.add_argument("--html-output", type=pathlib.Path)
     parser.add_argument("--kb", type=float, default=1.0e9)
+    parser.add_argument("--nu", type=float, default=0.5)
+    parser.add_argument("--use-midedge", action="store_true")
     parser.add_argument(
         "--mesh-method",
         choices=("convex_hull", "delaunay"),
@@ -35,7 +37,9 @@ def main():
     estimator = VisuoShellForceEstimator.from_reference_points(
         reference_nodes,
         kb=args.kb,
+        nu=args.nu,
         mesh_method=args.mesh_method,
+        use_midedge=args.use_midedge,
     )
 
     forces_by_frame = {}

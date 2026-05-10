@@ -41,4 +41,3 @@ class SimParams:
     sparse: bool = False
     line_search_iters: int = 20
     use_predictor_corrector_for_ground_contact: bool = False
-    ground_level_for_predictor_corrector: float = None

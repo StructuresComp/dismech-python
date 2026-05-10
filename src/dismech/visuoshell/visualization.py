@@ -333,7 +333,12 @@ def visualize_pyvista(
             if image_dir is not None
             else None
         )
-        plotter.show(screenshot=str(screenshot_path) if screenshot_path else None)
+        if screenshot_path is not None:
+            plotter.screenshot(str(screenshot_path))
+        elif off_screen:
+            plotter.render()
+        else:
+            plotter.show()
         last_plotter = plotter
         if screenshot_path is not None:
             saved_images.append(screenshot_path)

@@ -196,6 +196,7 @@ shellData.js
 *.gif
 *.xls
 *.xlsx
+*.png
 
 # extra experiment ipynb
 extra/

@@ -3,10 +3,10 @@ import typing
 
 import numpy as np
 
-from ..elastics import HingeEnergy, TriangleEnergy
+from ..elastics import HingeEnergy, StretchEnergy, TriangleEnergy
 from ..frame_util import compute_tfc_midedge
 from ..soft_robot import SoftRobot
-from ..springs import HingeSprings, TriangleSpring
+from ..springs import HingeSprings, StretchSprings, TriangleSpring
 from ..state import RobotState
 from .mesh import VisuoShellMesh, build_mesh
 
@@ -24,12 +24,17 @@ class VisuoShellForceEstimator:
     reference_force: np.ndarray = dataclasses.field(default_factory=lambda: np.empty(0))
     reference_energy: float = 0.0
     reference_n_nodes: int = 0
+    stretch_springs: StretchSprings | None = None
+    stretch_energy: StretchEnergy | None = None
+    reference_stretch_force: np.ndarray = dataclasses.field(default_factory=lambda: np.empty(0))
+    reference_stretch_energy: float = 0.0
 
     @classmethod
     def from_reference_points(
         cls,
         reference_points: np.ndarray,
         kb: float | np.ndarray = 1.0e9,
+        ks: float | np.ndarray = 1.0e12,
         nu: float = 0.5,
         mesh_method: str = "convex_hull",
         use_midedge: bool = False,
@@ -37,8 +42,15 @@ class VisuoShellForceEstimator:
         reference_points = _validate_nodes(reference_points)
         mesh = build_mesh(reference_points, method=mesh_method)
 
+        shell_edges, face_edges, signs = _face_edge_connectivity(mesh.triangles)
+        edge_ref_len = np.linalg.norm(
+            reference_points[shell_edges[:, 1]] - reference_points[shell_edges[:, 0]], axis=1
+        )
+
         if use_midedge:
-            midedge = _build_midedge_data(reference_points, mesh.triangles)
+            midedge = _build_midedge_data(
+                reference_points, mesh.triangles, shell_edges, face_edges, signs, edge_ref_len
+            )
             kb_values = _stiffness_values(kb, mesh.triangles.shape[0], "n_triangles")
             springs = _build_triangle_springs(midedge, kb_values, nu)
             reference_state = _midedge_state_from_nodes(reference_points, midedge)
@@ -55,8 +67,18 @@ class VisuoShellForceEstimator:
             reference_state = _state_from_nodes(reference_points)
             energy = HingeEnergy(springs, reference_state)
 
+        ks_values = _stiffness_values(ks, shell_edges.shape[0], "n_edges")
+        stretch_springs = StretchSprings.from_arrays(
+            shell_edges, edge_ref_len, ks_values, SoftRobot.map_node_to_dof
+        )
+        stretch_energy = StretchEnergy(stretch_springs, reference_state)
+
         reference_force, _ = energy.grad_hess_energy_linear_elastic(reference_state)
         reference_energy = float(np.sum(energy.get_energy_linear_elastic(reference_state)))
+        reference_stretch_force, _ = stretch_energy.grad_hess_energy_linear_elastic(reference_state)
+        reference_stretch_energy = float(
+            np.sum(stretch_energy.get_energy_linear_elastic(reference_state))
+        )
 
         return cls(
             mesh=mesh,
@@ -68,13 +90,21 @@ class VisuoShellForceEstimator:
             reference_force=reference_force,
             reference_energy=reference_energy,
             reference_n_nodes=reference_points.shape[0],
+            stretch_springs=stretch_springs,
+            stretch_energy=stretch_energy,
+            reference_stretch_force=reference_stretch_force,
+            reference_stretch_energy=reference_stretch_energy,
         )
 
     def elastic_force(self, nodes: np.ndarray) -> np.ndarray:
         """Return the reference-calibrated elastic force at each tracked node."""
         nodes = _validate_nodes(nodes, self.n_nodes)
-        force, _ = self.energy.grad_hess_energy_linear_elastic(self._state_from_nodes(nodes))
-        force = force - self.reference_force
+        state = self._state_from_nodes(nodes)
+        bend_force, _ = self.energy.grad_hess_energy_linear_elastic(state)
+        stretch_force, _ = self.stretch_energy.grad_hess_energy_linear_elastic(state)
+        force = (bend_force - self.reference_force) + (
+            stretch_force - self.reference_stretch_force
+        )
         return force[: 3 * self.n_nodes].reshape(-1, 3)
 
     def external_balance_force(self, nodes: np.ndarray) -> np.ndarray:
@@ -83,9 +113,11 @@ class VisuoShellForceEstimator:
 
     def energy_value(self, nodes: np.ndarray) -> float:
         nodes = _validate_nodes(nodes, self.n_nodes)
-        return float(
-            np.sum(self.energy.get_energy_linear_elastic(self._state_from_nodes(nodes)))
-            - self.reference_energy
+        state = self._state_from_nodes(nodes)
+        bend_energy = float(np.sum(self.energy.get_energy_linear_elastic(state)))
+        stretch_energy = float(np.sum(self.stretch_energy.get_energy_linear_elastic(state)))
+        return (bend_energy - self.reference_energy) + (
+            stretch_energy - self.reference_stretch_energy
         )
 
     def _state_from_nodes(self, nodes: np.ndarray) -> RobotState:
@@ -175,9 +207,14 @@ def _stiffness_values(kb: float | np.ndarray, size: int, size_name: str) -> np.n
     return kb_values
 
 
-def _build_midedge_data(nodes: np.ndarray, triangles: np.ndarray) -> VisuoShellMidedgeData:
-    shell_edges, face_edges, signs = _face_edge_connectivity(triangles)
-    ref_len = np.linalg.norm(nodes[shell_edges[:, 1]] - nodes[shell_edges[:, 0]], axis=1)
+def _build_midedge_data(
+    nodes: np.ndarray,
+    triangles: np.ndarray,
+    shell_edges: np.ndarray,
+    face_edges: np.ndarray,
+    signs: np.ndarray,
+    ref_len: np.ndarray,
+) -> VisuoShellMidedgeData:
     face_area = _triangle_areas(nodes, triangles)
     tau = _compute_tau(nodes, triangles, shell_edges, face_edges)
     all_p = nodes[triangles]

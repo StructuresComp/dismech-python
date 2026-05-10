@@ -26,8 +26,6 @@ class VisuoShellForceEstimator:
     reference_n_nodes: int = 0
     stretch_springs: StretchSprings | None = None
     stretch_energy: StretchEnergy | None = None
-    reference_stretch_force: np.ndarray = dataclasses.field(default_factory=lambda: np.empty(0))
-    reference_stretch_energy: float = 0.0
 
     @classmethod
     def from_reference_points(
@@ -73,12 +71,12 @@ class VisuoShellForceEstimator:
         )
         stretch_energy = StretchEnergy(stretch_springs, reference_state)
 
-        reference_force, _ = energy.grad_hess_energy_linear_elastic(reference_state)
-        reference_energy = float(np.sum(energy.get_energy_linear_elastic(reference_state)))
-        reference_stretch_force, _ = stretch_energy.grad_hess_energy_linear_elastic(reference_state)
-        reference_stretch_energy = float(
-            np.sum(stretch_energy.get_energy_linear_elastic(reference_state))
-        )
+        if use_midedge:
+            reference_force, _ = energy.grad_hess_energy_linear_elastic(reference_state)
+            reference_energy = float(np.sum(energy.get_energy_linear_elastic(reference_state)))
+        else:
+            reference_force = np.empty(0)
+            reference_energy = 0.0
 
         return cls(
             mesh=mesh,
@@ -92,8 +90,6 @@ class VisuoShellForceEstimator:
             reference_n_nodes=reference_points.shape[0],
             stretch_springs=stretch_springs,
             stretch_energy=stretch_energy,
-            reference_stretch_force=reference_stretch_force,
-            reference_stretch_energy=reference_stretch_energy,
         )
 
     def elastic_force(self, nodes: np.ndarray) -> np.ndarray:
@@ -102,9 +98,9 @@ class VisuoShellForceEstimator:
         state = self._state_from_nodes(nodes)
         bend_force, _ = self.energy.grad_hess_energy_linear_elastic(state)
         stretch_force, _ = self.stretch_energy.grad_hess_energy_linear_elastic(state)
-        force = (bend_force - self.reference_force) + (
-            stretch_force - self.reference_stretch_force
-        )
+        if self.use_midedge:
+            bend_force = bend_force - self.reference_force
+        force = bend_force + stretch_force
         return force[: 3 * self.n_nodes].reshape(-1, 3)
 
     def external_balance_force(self, nodes: np.ndarray) -> np.ndarray:
@@ -116,9 +112,9 @@ class VisuoShellForceEstimator:
         state = self._state_from_nodes(nodes)
         bend_energy = float(np.sum(self.energy.get_energy_linear_elastic(state)))
         stretch_energy = float(np.sum(self.stretch_energy.get_energy_linear_elastic(state)))
-        return (bend_energy - self.reference_energy) + (
-            stretch_energy - self.reference_stretch_energy
-        )
+        if self.use_midedge:
+            bend_energy = bend_energy - self.reference_energy
+        return bend_energy + stretch_energy
 
     def _state_from_nodes(self, nodes: np.ndarray) -> RobotState:
         if self.use_midedge:

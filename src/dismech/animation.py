@@ -67,12 +67,17 @@ def get_animation(robot, t, qs, options: AnimationOptions):
     time_text = ax.text2D(0.05, 0.95, "", transform=ax.transAxes)
 
     if not options.follow_data:
+        z_min_auto = nodes_all[:, :, 2].min()
+        z_max_auto = nodes_all[:, :, 2].max()
+        if hasattr(robot.env, 'ground_z'):
+            z_min_auto = min(z_min_auto, robot.env.ground_z)
+            z_max_auto = max(z_max_auto, robot.env.ground_z)
         ax.set_xlim(
             *((options.x_lim or (nodes_all[:, :, 0].min(), nodes_all[:, :, 0].max()))))
         ax.set_ylim(
             *((options.y_lim or (nodes_all[:, :, 1].min(), nodes_all[:, :, 1].max()))))
         ax.set_zlim(
-            *((options.z_lim or (nodes_all[:, :, 2].min(), nodes_all[:, :, 2].max()))))
+            *((options.z_lim or (z_min_auto, z_max_auto))))
 
     def init():
         scatter_free._offsets3d = ([], [], [])
@@ -211,6 +216,12 @@ def get_interactive_animation_plotly(robot, t, qs, options):
                                x=0.05, y=0.95, xref="paper", yref="paper"
                            )])))
 
+    z_min_auto = nodes_all[:, :, 2].min()
+    z_max_auto = nodes_all[:, :, 2].max()
+    if hasattr(robot.env, 'ground_z'):
+        z_min_auto = min(z_min_auto, robot.env.ground_z)
+        z_max_auto = max(z_max_auto, robot.env.ground_z)
+
     layout = go.Layout(
         title=options.title,
         scene=dict(
@@ -220,7 +231,7 @@ def get_interactive_animation_plotly(robot, t, qs, options):
             camera=dict(eye=camera_eye),
             xaxis=dict(range=options.x_lim if options.x_lim else [nodes_all[:, :, 0].min(), nodes_all[:, :, 0].max()]),
             yaxis=dict(range=options.y_lim if options.y_lim else [nodes_all[:, :, 1].min(), nodes_all[:, :, 1].max()]),
-            zaxis=dict(range=options.z_lim if options.z_lim else [nodes_all[:, :, 2].min(), nodes_all[:, :, 2].max()])
+            zaxis=dict(range=options.z_lim if options.z_lim else [z_min_auto, z_max_auto])
         ),
         updatemenus=[{
             "buttons": [

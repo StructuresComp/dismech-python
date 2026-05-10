@@ -8,8 +8,7 @@ import numpy as np
 from ..soft_robot import SoftRobot
 from ..state import RobotState
 from ..elastics import ElasticEnergy, StretchEnergy, HingeEnergy, BendEnergy, TriangleEnergy, TwistEnergy
-from ..external_forces import compute_gravity_forces, compute_aerodynamic_forces_vectorized, compute_ground_contact, compute_ground_contact_friction, compute_rft, compute_damping_force, compute_surface_viscous_drag, compute_thrust_force_and_jacobian, add_point_forces
-# from ..external_forces import predictor_step_for_ground_contact, corrector_step_for_ground_contact
+from ..external_forces import compute_gravity_forces, compute_aerodynamic_forces_vectorized, compute_ground_contact, compute_ground_contact_friction, compute_rft, compute_damping_force, compute_surface_viscous_drag, compute_thrust_force_and_jacobian, add_point_forces, predictor_step_for_ground_contact, corrector_step_for_ground_contact
 from ..solvers import Solver, NumpySolver, PardisoSolver
 from ..visualizer import Visualizer
 from ..contact import IMCEnergy, ShellContactEnergy, IMCFrictionEnergy
@@ -51,6 +50,16 @@ class TimeStepper(metaclass=abc.ABCMeta):
                 self.elastic_energies[TWIST] = TwistEnergy(
                     robot.twist_springs, robot.state)
 
+        if robot.sim_params.use_predictor_corrector_for_ground_contact:
+            if "floorContact" not in robot.env.ext_force_list:
+                raise ValueError(
+                    "use_predictor_corrector_for_ground_contact=True requires "
+                    "the 'floorContact' env force to be configured (it provides "
+                    "ground_z, ground_h, and ground_delta). The penalty contact "
+                    "force will be skipped automatically when the predictor-"
+                    "corrector is active."
+                )
+
         if "selfContact" in robot.env.ext_force_list:
             self._contact_energy = IMCEnergy(robot.contact_pairs, robot.env.delta, robot.env.h, robot.env.imc_stiffness)
             # self._contact_energy = ShellContactEnergy(robot.tri_contact_pairs, robot.env.delta, robot.env.h, robot.env.imc_stiffness, None, True)
@@ -79,17 +88,18 @@ class TimeStepper(metaclass=abc.ABCMeta):
         f_norms = []
         time_array = []
         Fs = []
-        i=0
-        t=0.0
+        i = 0
+        t = 0.0
         time_array.append(t)
         ret.append(robot)
         Fs.append(np.zeros_like(robot.state.q))
+        f_norms.append(0.0)
 
         while t < robot.sim_params.total_time:
             # Handle user function
             if self.before_step is not None:
                 robot = self.before_step(robot, i * robot.sim_params.dt)
-            
+
             try:
                 robot, f_norm, F = self.step(robot)
             except Exception as e:
@@ -98,6 +108,9 @@ class TimeStepper(metaclass=abc.ABCMeta):
                 print("Reducing time step to:", robot.sim_params.dt)
                 robot, f_norm, F = self.step(robot)
 
+            i += 1
+            t += robot.sim_params.dt
+
             # Update on step interval
             if viz is not None and i % robot.sim_params.plot_step == 0:
                 viz.update(robot, t)
@@ -105,9 +118,7 @@ class TimeStepper(metaclass=abc.ABCMeta):
                 ret.append(robot)
                 f_norms.append(f_norm)
                 Fs.append(F)
-            i += 1
-            t += robot.sim_params.dt
-            time_array.append(t)
+                time_array.append(t)
 
             # print current time
             print("current_time: ", t)
@@ -116,6 +127,26 @@ class TimeStepper(metaclass=abc.ABCMeta):
     def step(self, robot: SoftRobot = None, debug: bool = True) -> typing.Tuple[SoftRobot, float, np.ndarray]:
         robot = robot or self.robot
 
+        q, f_norm, F = self._solve_step(robot, debug)
+
+        if robot.sim_params.use_predictor_corrector_for_ground_contact:
+            robot, revert_to_start, vertically_constrained_nodes = \
+                predictor_step_for_ground_contact(robot, q)
+            if revert_to_start:
+                # Predictor mutated state.q to snap penetrating z-DOFs and
+                # added them to fixed_dof; re-solve the step from the snapped
+                # start-of-step state with the new constraints in place.
+                q, f_norm, F = self._solve_step(robot, debug)
+                robot = corrector_step_for_ground_contact(
+                    robot, q, vertically_constrained_nodes)
+
+        self.robot = self._finalize_update(robot, q)
+        self.f_norm = f_norm
+        return self.robot, self.f_norm, F
+
+    def _solve_step(self, robot: SoftRobot, debug: bool) -> typing.Tuple[np.ndarray, float, np.ndarray]:
+        """Run the Newton iteration to convergence and return the trial q,
+        residual norm, and force vector without finalizing robot state."""
         # Initialize iteration variables
         q = copy.deepcopy(robot.state.q)
         alpha = 1.0
@@ -200,10 +231,7 @@ class TimeStepper(metaclass=abc.ABCMeta):
             raise ValueError(
                 "Iteration limit {} reached before convergence".format(robot.sim_params.max_iter))
 
-        # Final update and return
-        self.robot = self._finalize_update(robot, q)
-        self.f_norm = np.linalg.norm(f_free)
-        return self.robot, self.f_norm, F
+        return q, np.linalg.norm(f_free), F
 
     @abc.abstractmethod
     def _compute_inertial_force_and_jacobian(self, robot: SoftRobot, q: np.ndarray) -> typing.Tuple[np.ndarray, np.ndarray]:
@@ -268,7 +296,7 @@ class TimeStepper(metaclass=abc.ABCMeta):
             F, J, = compute_thrust_force_and_jacobian(robot, q, u)
             forces -= F
             jacobian -= J  # FIXME: Sparse option
-        if "floorContact" in robot.env.ext_force_list:
+        if "floorContact" in robot.env.ext_force_list and not robot.sim_params.use_predictor_corrector_for_ground_contact:
             if "floorFriction" in robot.env.ext_force_list:
                 F, J = compute_ground_contact_friction(robot, q, u)
             else:
@@ -300,6 +328,9 @@ class TimeStepper(metaclass=abc.ABCMeta):
                    robot: SoftRobot):
         """ Check all convergence criteria """
         #print(err)
+        if dq.size == 0:
+            # No free DOFs — nothing left to solve, treat as converged.
+            return True
         disp_converged = np.max(np.abs(dq)) / \
             robot.sim_params.dt < robot.sim_params.dtol
         force_converged = err < robot.sim_params.tol

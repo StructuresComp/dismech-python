@@ -5,13 +5,14 @@ from ..soft_robot import SoftRobot
 
 def predictor_step_for_ground_contact(robot: SoftRobot, q: np.ndarray) -> typing.Tuple[SoftRobot, bool, np.ndarray]:
     """
-    Predictor step for ground contact (Belt Contact BC).
+    Predictor step for ground contact.
 
-    Detects nodes whose z-coordinate has reached the belt (``z_i <= z_belt + r_0``,
-    using ``env.ground_z + env.ground_h`` and the tolerance ``env.ground_delta``),
-    rewinds those nodes' z-DOF in ``robot.state.q`` to the belt surface, and adds
-    those z-DOFs to the robot's fixed-DOF set so the subsequent re-solve treats
-    them as vertically constrained while ``(x, y)`` continue to follow the EOM.
+    Detects nodes whose z-coordinate has reached the ground
+    (``z_i <= ground_z + ground_h``, with tolerance ``ground_delta``), rewinds
+    those nodes' z-DOF in ``robot.state.q`` to the ground surface, and adds
+    those z-DOFs to the robot's fixed-DOF set so the subsequent re-solve
+    treats them as vertically constrained while ``(x, y)`` continue to
+    follow the EOM.
 
     Parameters
     ----------
@@ -30,10 +31,11 @@ def predictor_step_for_ground_contact(robot: SoftRobot, q: np.ndarray) -> typing
         True iff any new contacts were added, signalling the caller to rewind
         and re-solve the time step with the updated constraints.
     vertically_constrained_nodes : (m,) array
-        Node indices whose z-DOF was *just added* to ``fixed_dof`` by this call
-        (the new contact set Ξ). The caller is responsible for accumulating
-        this across calls if it needs the full set of currently
-        vertically-constrained nodes to pass to the corrector.
+        Node indices whose z-DOF was just added to ``fixed_dof`` by this call
+        (the new contact set Ξ). Pass this directly to the corrector after
+        the re-solve — the paper transitions every Ξ node to fully constrained
+        or fully free within the same step, so the set does not accumulate
+        across steps.
     """
     z_indices = np.arange(2, robot.end_node_dof_index, 3)
 
@@ -56,19 +58,18 @@ def predictor_step_for_ground_contact(robot: SoftRobot, q: np.ndarray) -> typing
 
 def corrector_step_for_ground_contact(robot: SoftRobot, q_final: np.ndarray, vertically_constrained_nodes: np.ndarray, threshold: float = 1e-6) -> SoftRobot:
     """
-    Corrector step for ground contact (Belt Contact BC).
+    Corrector step for ground contact.
 
     For each currently vertically-constrained node, transitions it either to
-    the fully constrained state (sticks to the belt) or back to the free state,
-    based on the relative velocity between the node and the belt:
+    the fully constrained state (sticks to the ground) or back to the free
+    state based on the node's speed:
 
-        ``||u_node - u_belt|| < threshold``  →  fully constrained
-        otherwise                            →  fully freed
+        ``||u_node|| < threshold``  →  fully constrained
+        otherwise                   →  fully freed
 
-    The belt is assumed static (``u_belt = 0``); ``u_node`` is the full 3D
-    velocity from ``(q_final - state.q) / dt``. Since z is held during the
-    constrained solve, the meaningful component of the criterion is the
-    tangential ``(x, y)`` slip.
+    ``u_node`` is the full 3D velocity from ``(q_final - state.q) / dt``.
+    Since z is held during the constrained solve, the meaningful component
+    of the criterion is the tangential ``(x, y)`` slip.
 
     Parameters
     ----------
@@ -78,11 +79,10 @@ def corrector_step_for_ground_contact(robot: SoftRobot, q_final: np.ndarray, ver
     q_final : (n_dof,) array
         Position vector returned by the constrained solve.
     vertically_constrained_nodes : (m,) array
-        All node indices currently held by the predictor's vertical constraint.
-        The caller is responsible for maintaining this cumulative set across
-        time steps.
+        Node indices currently held by the predictor's vertical constraint
+        for this step (the set Ξ returned by the predictor).
     threshold : float, optional
-        Slip-velocity tolerance for the stick decision (paper uses 1e-6 cm/s).
+        Slip-velocity tolerance for the stick decision.
 
     Returns
     -------
@@ -95,7 +95,6 @@ def corrector_step_for_ground_contact(robot: SoftRobot, q_final: np.ndarray, ver
 
     u = (q_final - robot.state.q) / robot.sim_params.dt
     u_node = u[:robot.end_node_dof_index].reshape(-1, 3)[vertically_constrained_nodes]
-    # TODO: extend to moving belts by subtracting u_belt before taking the norm.
     slip_speed = np.linalg.norm(u_node, axis=1)
 
     stuck_mask = slip_speed < threshold

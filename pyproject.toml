@@ -17,6 +17,7 @@ pardiso = [
     "pypardiso>=0.4.6",
 ]
 visuoshell-render = [
+    "pillow>=11.1.0",
     "pyvista>=0.46.3",
 ]
 

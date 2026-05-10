@@ -83,7 +83,7 @@ def _convex_hull_triangles(points: np.ndarray) -> np.ndarray:
 
 
 def _filter_large_triangles(triangles: np.ndarray, points: np.ndarray) -> np.ndarray:
-    threshold = 2 * pdist(points).max() / np.sqrt(len(points))
+    threshold = 5 * pdist(points).max() / np.sqrt(len(points))
 
     def max_edge_length(tri):
         p0, p1, p2 = points[tri]

@@ -253,6 +253,7 @@ pardiso = [
     { name = "pypardiso" },
 ]
 visuoshell-render = [
+    { name = "pillow" },
     { name = "pyvista" },
 ]
 
@@ -268,6 +269,7 @@ dev = [
 requires-dist = [
     { name = "matplotlib", specifier = ">=3.10.3" },
     { name = "numba", specifier = ">=0.61.2" },
+    { name = "pillow", marker = "extra == 'visuoshell-render'", specifier = ">=11.1.0" },
     { name = "plotly", specifier = ">=6.2.0" },
     { name = "pypardiso", marker = "extra == 'pardiso'", specifier = ">=0.4.6" },
     { name = "pyvista", marker = "extra == 'visuoshell-render'", specifier = ">=0.46.3" },

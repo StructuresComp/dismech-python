@@ -1,5 +1,6 @@
 import dataclasses
 import math
+import pathlib
 import time
 import typing
 
@@ -19,6 +20,10 @@ class VisuoShellVisualizationOptions:
     arrow_scale: float = 1.0
     pyvista_pause: float = 0.5
     pyvista_show_edges: bool = True
+    pyvista_off_screen: bool = False
+    pyvista_image_dir: str | pathlib.Path | None = None
+    pyvista_gif_path: str | pathlib.Path | None = None
+    pyvista_gif_duration_ms: int = 100
     camera_view: tuple[float, float] = (30.0, 45.0)
     x_lim: tuple[float, float] | None = None
     y_lim: tuple[float, float] | None = None
@@ -110,7 +115,6 @@ def get_force_animation_plotly(
     frame_names = sorted(nodes_by_frame)
     if not frame_names:
         raise ValueError("nodes_by_frame must contain at least one frame")
-
     if options.plot_step < 1:
         raise ValueError("plot_step must be at least 1")
 
@@ -271,15 +275,42 @@ def visualize_pyvista(
     triangles: np.ndarray,
     options: VisuoShellVisualizationOptions | None = None,
 ):
-    """Show frames with the original VisuoShell PyVista rendering style."""
+    """Show frames with the original VisuoShell PyVista rendering style.
+
+    Set ``pyvista_image_dir`` or ``pyvista_gif_path`` in the options to save
+    off-screen PNG frames and/or an animated GIF.
+    """
     pv = _import_pyvista()
     options = options or VisuoShellVisualizationOptions()
     frame_names = sorted(nodes_by_frame)
     if not frame_names:
         raise ValueError("nodes_by_frame must contain at least one frame")
+    if options.plot_step < 1:
+        raise ValueError("plot_step must be at least 1")
 
+    selected_frame_names = frame_names[:: options.plot_step]
+    if frame_names[-1] != selected_frame_names[-1]:
+        selected_frame_names.append(frame_names[-1])
+
+    image_dir = (
+        pathlib.Path(options.pyvista_image_dir)
+        if options.pyvista_image_dir is not None
+        else None
+    )
+    gif_path = (
+        pathlib.Path(options.pyvista_gif_path)
+        if options.pyvista_gif_path is not None
+        else None
+    )
+    if image_dir is None and gif_path is not None:
+        image_dir = gif_path.with_suffix("")
+    if image_dir is not None:
+        image_dir.mkdir(parents=True, exist_ok=True)
+
+    saved_images: list[pathlib.Path] = []
+    off_screen = options.pyvista_off_screen or image_dir is not None or gif_path is not None
     last_plotter = None
-    for frame_name in frame_names[:: options.plot_step]:
+    for frame_name in selected_frame_names:
         nodes, forces, frame_triangles = _validate_inputs(
             nodes_by_frame[frame_name],
             forces_by_frame[frame_name],
@@ -288,7 +319,7 @@ def visualize_pyvista(
         mesh = get_force_polydata_pyvista(nodes, forces, frame_triangles)
         arrow_vectors = _arrow_vectors(forces, options.arrow_scale)
 
-        plotter = pv.Plotter()
+        plotter = pv.Plotter(off_screen=off_screen)
         plotter.add_mesh(
             mesh,
             scalars="force_magnitude",
@@ -297,11 +328,24 @@ def visualize_pyvista(
         )
         plotter.add_arrows(nodes, arrow_vectors, mag=1.0)
         plotter.add_title(frame_name)
-        plotter.show()
+        screenshot_path = (
+            image_dir / f"{pathlib.Path(frame_name).stem}.png"
+            if image_dir is not None
+            else None
+        )
+        plotter.show(screenshot=str(screenshot_path) if screenshot_path else None)
         last_plotter = plotter
+        if screenshot_path is not None:
+            saved_images.append(screenshot_path)
 
         if options.pyvista_pause > 0:
             time.sleep(options.pyvista_pause)
+
+        if off_screen:
+            plotter.close()
+
+    if gif_path is not None:
+        _save_gif(saved_images, gif_path, options.pyvista_gif_duration_ms)
 
     return last_plotter
 
@@ -373,6 +417,38 @@ def _import_pyvista():
             "Install it to use visualize_pyvista()."
         ) from exc
     return pv
+
+
+def _save_gif(
+    image_paths: typing.Sequence[pathlib.Path],
+    gif_path: pathlib.Path,
+    duration_ms: int,
+) -> None:
+    if not image_paths:
+        raise ValueError("no PyVista screenshots were generated for GIF output")
+
+    try:
+        from PIL import Image
+    except ImportError as exc:
+        raise ImportError(
+            "GIF output requires the optional 'Pillow' package. "
+            "Install it to use pyvista_gif_path."
+        ) from exc
+
+    gif_path.parent.mkdir(parents=True, exist_ok=True)
+    frames = [Image.open(path) for path in image_paths]
+    try:
+        frames[0].save(
+            gif_path,
+            format="GIF",
+            append_images=frames[1:],
+            save_all=True,
+            duration=duration_ms,
+            loop=0,
+        )
+    finally:
+        for frame in frames:
+            frame.close()
 
 
 def _apply_layout(

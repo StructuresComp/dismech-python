@@ -21,8 +21,8 @@ def test_visuoshell_reference_shape_has_zero_elastic_force():
 
     estimator = VisuoShellForceEstimator.from_reference_points(nodes, kb=3.0)
 
-    assert estimator.triangles.shape == (4, 3)
-    assert estimator.mesh.hinge_nodes.shape == (4, 4)
+    assert estimator.triangles.shape == (6, 3)
+    assert estimator.mesh.hinge_nodes.shape == (9, 4)
     assert np.allclose(estimator.elastic_force(nodes), 0.0)
     assert estimator.energy_value(nodes) == 0.0
 

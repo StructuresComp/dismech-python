@@ -56,7 +56,7 @@ def predictor_step_for_ground_contact(robot: SoftRobot, q: np.ndarray) -> typing
 
     return robot, True, vertically_constrained_nodes
 
-def corrector_step_for_ground_contact(robot: SoftRobot, q_final: np.ndarray, vertically_constrained_nodes: np.ndarray, threshold: float = 1e-6) -> SoftRobot:
+def corrector_step_for_ground_contact(robot: SoftRobot, q_final: np.ndarray, vertically_constrained_nodes: np.ndarray, threshold: float = 1e-4, no_future_freeing: bool = False, frictionless: bool = False) -> SoftRobot:
     """
     Corrector step for ground contact.
 
@@ -83,12 +83,28 @@ def corrector_step_for_ground_contact(robot: SoftRobot, q_final: np.ndarray, ver
         for this step (the set Ξ returned by the predictor).
     threshold : float, optional
         Slip-velocity tolerance for the stick decision.
+    no_future_freeing : bool, optional
+        If True, the sliding branch is suppressed: nodes that would
+        otherwise be fully released are left in the predictor's z-only
+        constrained state (z stays pinned at the ground, x/y remain free).
+        Stuck nodes are still promoted to fully constrained. Effectively
+        disables lift-off — once a node has been touched by the predictor
+        its z-DOF cannot return to ``free_dof``.
+    frictionless : bool, optional
+        If True, the corrector only touches the z-DOF: stuck nodes keep
+        only their z pinned (x/y stay free, i.e. no tangential constraint)
+        and sliding nodes have only their z released. This models a
+        frictionless ground — the tangential constraint that would
+        otherwise be added by ``fix_nodes(nodes_to_fix)`` (which fixes all
+        three axes) is suppressed, so there are no bilateral x/y friction
+        reactions. The stick/slide criterion still uses the 3D slip speed.
 
     Returns
     -------
     robot : SoftRobot
         Robot with stuck nodes fully constrained and lifting/sliding nodes
-        fully freed.
+        either fully freed (default) or left z-only constrained when
+        ``no_future_freeing`` is set.
     """
     if vertically_constrained_nodes.size == 0:
         return robot
@@ -101,9 +117,12 @@ def corrector_step_for_ground_contact(robot: SoftRobot, q_final: np.ndarray, ver
     nodes_to_fix = vertically_constrained_nodes[stuck_mask]
     nodes_to_free = vertically_constrained_nodes[~stuck_mask]
 
+    fix_axis = 2 if frictionless else None
+    free_axis = 2 if frictionless else None
+
     if nodes_to_fix.size > 0:
-        robot = robot.fix_nodes(nodes_to_fix)
-    if nodes_to_free.size > 0:
-        robot = robot.free_nodes(nodes_to_free)
+        robot = robot.fix_nodes(nodes_to_fix, axis=fix_axis)
+    if nodes_to_free.size > 0 and not no_future_freeing:
+        robot = robot.free_nodes(nodes_to_free, axis=free_axis)
 
     return robot

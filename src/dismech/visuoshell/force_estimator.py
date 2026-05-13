@@ -21,8 +21,6 @@ class VisuoShellForceEstimator:
     reference_state: RobotState
     use_midedge: bool = False
     midedge: "VisuoShellMidedgeData | None" = None
-    reference_force: np.ndarray = dataclasses.field(default_factory=lambda: np.empty(0))
-    reference_energy: float = 0.0
     reference_n_nodes: int = 0
     stretch_springs: StretchSprings | None = None
     stretch_energy: StretchEnergy | None = None
@@ -52,7 +50,7 @@ class VisuoShellForceEstimator:
             kb_values = _stiffness_values(kb, mesh.triangles.shape[0], "n_triangles")
             springs = _build_triangle_springs(midedge, kb_values, nu)
             reference_state = _midedge_state_from_nodes(reference_points, midedge)
-            energy = TriangleEnergy(springs, reference_state)
+            energy = TriangleEnergy(springs, reference_state, zero_reference=True)
         else:
             midedge = None
             kb_values = _stiffness_values(kb, mesh.hinge_nodes.shape[0], "n_hinges")
@@ -71,13 +69,6 @@ class VisuoShellForceEstimator:
         )
         stretch_energy = StretchEnergy(stretch_springs, reference_state)
 
-        if use_midedge:
-            reference_force, _ = energy.grad_hess_energy_linear_elastic(reference_state)
-            reference_energy = float(np.sum(energy.get_energy_linear_elastic(reference_state)))
-        else:
-            reference_force = np.empty(0)
-            reference_energy = 0.0
-
         return cls(
             mesh=mesh,
             springs=springs,
@@ -85,8 +76,6 @@ class VisuoShellForceEstimator:
             reference_state=reference_state,
             use_midedge=use_midedge,
             midedge=midedge,
-            reference_force=reference_force,
-            reference_energy=reference_energy,
             reference_n_nodes=reference_points.shape[0],
             stretch_springs=stretch_springs,
             stretch_energy=stretch_energy,
@@ -98,8 +87,6 @@ class VisuoShellForceEstimator:
         state = self._state_from_nodes(nodes)
         bend_force, _ = self.energy.grad_hess_energy_linear_elastic(state)
         stretch_force, _ = self.stretch_energy.grad_hess_energy_linear_elastic(state)
-        if self.use_midedge:
-            bend_force = bend_force - self.reference_force
         force = bend_force + stretch_force
         return force[: 3 * self.n_nodes].reshape(-1, 3)
 
@@ -112,9 +99,29 @@ class VisuoShellForceEstimator:
         state = self._state_from_nodes(nodes)
         bend_energy = float(np.sum(self.energy.get_energy_linear_elastic(state)))
         stretch_energy = float(np.sum(self.stretch_energy.get_energy_linear_elastic(state)))
-        if self.use_midedge:
-            bend_energy = bend_energy - self.reference_energy
         return bend_energy + stretch_energy
+
+    @property
+    def reference_force(self) -> np.ndarray:
+        """Per-DOF reference gradient (midedge path only) used internally by the energy.
+
+        For the hinge path this returns an empty array because HingeEnergy
+        already vanishes at the reference state and no calibration is needed.
+        """
+        if self.use_midedge:
+            ref = self.energy.reference_force
+            return np.asarray(ref) if isinstance(ref, np.ndarray) else np.empty(0)
+        return np.empty(0)
+
+    @property
+    def reference_energy(self) -> float:
+        """Total reference bending energy (midedge path only)."""
+        if self.use_midedge:
+            ref = self.energy.reference_energy
+            if isinstance(ref, np.ndarray):
+                return float(np.sum(ref))
+            return float(ref)
+        return 0.0
 
     def _state_from_nodes(self, nodes: np.ndarray) -> RobotState:
         if self.use_midedge:

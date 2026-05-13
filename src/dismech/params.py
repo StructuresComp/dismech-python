@@ -41,3 +41,5 @@ class SimParams:
     sparse: bool = False
     line_search_iters: int = 20
     use_predictor_corrector_for_ground_contact: bool = False
+    no_future_freeing_after_ground_contact: bool = False
+    frictionless_pc_contact: bool = False

@@ -77,6 +77,22 @@ class TimeStepper(metaclass=abc.ABCMeta):
         # Simulate callbacks
         self.before_step = None
 
+        # Contact-force bookkeeping. _contact_z_dofs is the cumulative set of
+        # z-DOF indices pinned to the ground by the predictor (and not yet
+        # released by the corrector); predictor adds, corrector removals are
+        # detected via a fixed_dof diff so the same code handles both
+        # no_future_freeing branches. _last_contact_info is the
+        # (node_indices, F_xyz) snapshot for the most recent step — F_xyz has
+        # shape (N, 3) with columns [Fx, Fy, Fz] at the node's x/y/z DOFs.
+        # The z column is the normal reaction; x/y are ~0 for z-only pinned
+        # (sliding) nodes and the friction reaction for fully stuck nodes.
+        # simulate() appends _last_contact_info to contact_log at the same
+        # cadence as Fs.
+        self._contact_z_dofs: np.ndarray = np.array([], dtype=int)
+        self._last_contact_info: typing.Tuple[np.ndarray, np.ndarray] = (
+            np.array([], dtype=int), np.zeros((0, 3), dtype=np.float64))
+        self.contact_log: typing.List[typing.Tuple[np.ndarray, np.ndarray]] = []
+
     def simulate(self, robot: SoftRobot = None, viz: Visualizer = None) -> typing.Tuple[typing.List[SoftRobot], typing.List[float], typing.List[float], typing.List[np.ndarray]]:
         robot = robot or self.robot
         steps = int(robot.sim_params.total_time / robot.sim_params.dt) + 1
@@ -88,12 +104,16 @@ class TimeStepper(metaclass=abc.ABCMeta):
         f_norms = []
         time_array = []
         Fs = []
+        self.contact_log = []
+        self._contact_z_dofs = np.array([], dtype=int)
         i = 0
         t = 0.0
         time_array.append(t)
         ret.append(robot)
         Fs.append(np.zeros_like(robot.state.q))
         f_norms.append(0.0)
+        self.contact_log.append(
+            (np.array([], dtype=int), np.zeros((0, 3), dtype=np.float64)))
 
         while t < robot.sim_params.total_time:
             # Handle user function
@@ -118,6 +138,7 @@ class TimeStepper(metaclass=abc.ABCMeta):
                 ret.append(robot)
                 f_norms.append(f_norm)
                 Fs.append(F)
+                self.contact_log.append(self._last_contact_info)
                 time_array.append(t)
 
             # print current time
@@ -137,12 +158,69 @@ class TimeStepper(metaclass=abc.ABCMeta):
                 # added them to fixed_dof; re-solve the step from the snapped
                 # start-of-step state with the new constraints in place.
                 q, f_norm, F = self._solve_step(robot, debug)
+                # New z-DOFs the predictor just pinned join the cumulative set.
+                new_z = vertically_constrained_nodes * 3 + 2
+                self._contact_z_dofs = np.union1d(self._contact_z_dofs, new_z)
+                # Run corrector and detect any z-DOFs it released via a
+                # fixed_dof diff. With no_future_freeing=True the corrector
+                # only adds (stuck x/y), so removed is empty and the set
+                # grows monotonically. With the default behavior, sliding
+                # nodes' z-DOFs are released and drop out of the set.
+                fixed_before = robot.fixed_dof.copy()
                 robot = corrector_step_for_ground_contact(
-                    robot, q, vertically_constrained_nodes)
+                    robot, q, vertically_constrained_nodes,
+                    no_future_freeing=robot.sim_params.no_future_freeing_after_ground_contact,
+                    frictionless=robot.sim_params.frictionless_pc_contact)
+                removed = np.setdiff1d(fixed_before, robot.fixed_dof)
+                self._contact_z_dofs = np.setdiff1d(
+                    self._contact_z_dofs, removed)
+
+        # F is the residual at the converged q for the most recent solve.
+        # For every contact-active node we pull all three nodal DOFs: the z
+        # entry is the normal contact reaction; the x/y entries are ~0 for
+        # nodes whose x/y remain free (sliding / z-only state) and the
+        # friction reactions for nodes the corrector fully constrained.
+        if self._contact_z_dofs.size > 0:
+            nodes = self._contact_z_dofs // 3
+            xyz_dofs = nodes[:, None] * 3 + np.arange(3)[None, :]
+            self._last_contact_info = (nodes.copy(), F[xyz_dofs].copy())
+        else:
+            self._last_contact_info = (
+                np.array([], dtype=int),
+                np.zeros((0, 3), dtype=np.float64))
 
         self.robot = self._finalize_update(robot, q)
         self.f_norm = f_norm
         return self.robot, self.f_norm, F
+
+    def _compute_residual_at(self, robot: SoftRobot, q: np.ndarray, first_iter: bool = False) -> typing.Tuple[np.ndarray, typing.Any]:
+        """Compute the full-size Newton residual F (and Jacobian J) at q.
+
+        F is the residual we drive to zero on the free DOFs. On fixed DOFs F
+        is the imbalance the constraint absorbs — i.e., the reaction force.
+        """
+        q_eval = self._compute_evaluation_position(robot, q)
+        u_eval = self._compute_evaluation_velocity(robot, q)
+
+        F = np.zeros(q.shape[0])
+        if robot.sim_params.sparse:
+            J = sp.csr_matrix((q.shape[0], q.shape[0]), dtype=np.float64)
+        else:
+            J = np.zeros((q.shape[0], q.shape[0]))
+
+        if not robot.sim_params.static_sim:
+            inertial_force, inertial_jacobian = self._compute_inertial_force_and_jacobian(
+                robot, q)
+            F += inertial_force
+            if robot.sim_params.sparse:
+                J += sp.diags(inertial_jacobian, format='csr')
+            else:
+                ndof_diag = np.arange(q.shape[0])
+                J[ndof_diag, ndof_diag] += inertial_jacobian
+
+        F, J = self._compute_forces_and_jacobian(
+            F, J, robot, q_eval, u_eval, first_iter)
+        return F, J
 
     def _solve_step(self, robot: SoftRobot, debug: bool) -> typing.Tuple[np.ndarray, float, np.ndarray]:
         """Run the Newton iteration to convergence and return the trial q,
@@ -154,36 +232,9 @@ class TimeStepper(metaclass=abc.ABCMeta):
         err_history = []
         solved = False
 
-        # Preallocate matrices
-        ndof_diag = np.arange(q.shape[0])
-
         while not solved:
-            # Some integrators compute F and J not at q_{n+1} (midpoint)
-            q_eval = self._compute_evaluation_position(robot, q)
-            u_eval = self._compute_evaluation_velocity(robot, q)
-
-            F = np.zeros(q.shape[0])
-
-            if robot.sim_params.sparse:
-                J = sp.csr_matrix(
-                    (q.shape[0], q.shape[0]), dtype=np.float64)
-            else:
-                J = np.zeros((q.shape[0], q.shape[0]))
-
-            # Inertial force vs equilibrium
-            if not robot.sim_params.static_sim:
-                inertial_force, inertial_jacobian = self._compute_inertial_force_and_jacobian(
-                    robot, q)
-                F += inertial_force
-
-                if robot.sim_params.sparse:
-                    J += sp.diags(inertial_jacobian, format='csr')
-                else:
-                    J[ndof_diag, ndof_diag] += inertial_jacobian
-
-            F, J = self._compute_forces_and_jacobian(
-                F, J, robot, q_eval, u_eval, iteration == 1)
-
+            F, J = self._compute_residual_at(
+                robot, q, first_iter=(iteration == 1))
 
             # Handle free DOF components
             f_free = F[robot.state.free_dof]
@@ -231,7 +282,13 @@ class TimeStepper(metaclass=abc.ABCMeta):
             raise ValueError(
                 "Iteration limit {} reached before convergence".format(robot.sim_params.max_iter))
 
-        return q, np.linalg.norm(f_free), F
+        # Re-evaluate F at the converged q. The in-loop F was computed at the
+        # previous q (before the final dq update), so F[fixed_dof] would be one
+        # Newton step stale. The fixed-DOF entries here are the constraint
+        # reaction forces — including contact reactions at predictor-pinned
+        # z-DOFs — so we want them at the actual converged configuration.
+        F, _ = self._compute_residual_at(robot, q, first_iter=False)
+        return q, np.linalg.norm(F[robot.state.free_dof]), F
 
     @abc.abstractmethod
     def _compute_inertial_force_and_jacobian(self, robot: SoftRobot, q: np.ndarray) -> typing.Tuple[np.ndarray, np.ndarray]:

@@ -137,7 +137,8 @@ class ElasticEnergy(metaclass=PostInitABCMeta):
         pass
 
 class TriangleEnergy(ElasticEnergy):
-    def __init__(self, springs: typing.List[TriangleSpring], initial_state: RobotState):
+    def __init__(self, springs: typing.List[TriangleSpring], initial_state: RobotState,
+                 zero_reference: bool = False):
         super().__init__(np.array([s.kb for s in springs]),
                          np.array([s.nodes_ind for s in springs]),
                          np.array([s.ind for s in springs]),
@@ -159,6 +160,32 @@ class TriangleEnergy(ElasticEnergy):
         stencil_n_dof = self._ind.shape[1]
         self._rows = np.repeat(self._ind, stencil_n_dof, axis=1).ravel()
         self._cols = np.tile(self._ind, (1, stencil_n_dof)).ravel()
+
+        # Zero-reference calibration: cache per-spring energy and per-DOF
+        # gradient at the initial state so subsequent calls return values
+        # measured relative to that reference. The Hessian is unchanged because
+        # the reference contribution is constant. The midedge formulation does
+        # not naturally vanish at its reference configuration, so callers that
+        # need a reference-anchored energy (e.g. VisuoShellForceEstimator) opt
+        # in with zero_reference=True.
+        self._zero_reference = zero_reference
+        if zero_reference:
+            self._reference_energy = self._compute_energy(initial_state).copy()
+            ref_force, _ = self._compute_grad_hess(initial_state, sparse=False)
+            self._reference_force = ref_force
+        else:
+            self._reference_energy = 0.0
+            self._reference_force = 0.0
+
+    @property
+    def reference_energy(self):
+        """Per-spring energy at the initial state when zero_reference=True; 0.0 otherwise."""
+        return self._reference_energy
+
+    @property
+    def reference_force(self):
+        """Per-DOF gradient at the initial state when zero_reference=True; 0.0 otherwise."""
+        return self._reference_force
 
     def _get_xi_is(self, q: np.ndarray) -> np.ndarray:
         return q[self._edges_ind]
@@ -223,6 +250,14 @@ class TriangleEnergy(ElasticEnergy):
     # Override
 
     def get_energy_linear_elastic(self, state: RobotState) -> np.ndarray:
+        return self._compute_energy(state) - self._reference_energy
+
+    def grad_hess_energy_linear_elastic(self, state: RobotState, sparse=False) -> typing.Tuple[np.ndarray, np.ndarray]:
+        Fs, Js = self._compute_grad_hess(state, sparse=sparse)
+        Fs = Fs - self._reference_force
+        return Fs, Js
+
+    def _compute_energy(self, state: RobotState) -> np.ndarray:
         tau = self._get_tau(state.tau)
         xis = self._get_xi_is(state.q)
         t, f, c, _, _ = self._get_t_f_c(state.q, tau)
@@ -270,7 +305,7 @@ class TriangleEnergy(ElasticEnergy):
 
         return self._kb * ((1-self._nu) * e1 + self._nu*e2) * self._A
 
-    def grad_hess_energy_linear_elastic(self, state: RobotState, sparse=False) -> typing.Tuple[np.ndarray, np.ndarray]:
+    def _compute_grad_hess(self, state: RobotState, sparse=False) -> typing.Tuple[np.ndarray, np.ndarray]:
         tau = self._get_tau(state.tau)
         xis = self._get_xi_is(state.q)
         t, f, c, unit_norm, A = self._get_t_f_c(state.q, tau)

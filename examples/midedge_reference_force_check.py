@@ -1,21 +1,23 @@
-"""Demonstrate why VisuoShellForceEstimator subtracts a bending reference force
-for the midedge (TriangleEnergy) path but not for the hinge (HingeEnergy) path.
+"""Demonstrate why TriangleEnergy applies a zero-reference calibration on the
+midedge bending path but no calibration is needed on the hinge path.
 
 For the hinge path, springs.nat_strain == get_strain(reference_state) by
 construction, so the raw bending gradient at the reference is exactly zero —
-the estimator skips the reference-force computation entirely.
+no calibration is required.
 
 For the midedge path, TriangleEnergy bypasses the base-class strain machinery
 and uses cached init_ts/init_fs/init_cs/init_xis from compute_tfc_midedge —
 these do NOT generally agree with the on-the-fly _get_t_f_c output at the
-reference state, so the raw bending gradient at the reference is nonzero. The
-estimator calibrates this away by subtracting reference_force.
+reference state, so the raw bending gradient at the reference is nonzero.
+TriangleEnergy is constructed with zero_reference=True for the midedge path so
+that its public grad_hess_energy_linear_elastic subtracts that residual.
 
-This script reports the raw and calibrated forces for both paths so you can
-see the difference.
+This script reports the raw (pre-subtraction) and calibrated (post-subtraction)
+forces for both paths so you can see the difference.
 """
 import numpy as np
 
+from dismech.elastics import TriangleEnergy
 from dismech.visuoshell import VisuoShellForceEstimator
 
 
@@ -35,7 +37,11 @@ def make_asymmetric_shell(seed: int = 0) -> np.ndarray:
 
 def report(label: str, estimator: VisuoShellForceEstimator, points: np.ndarray) -> None:
     state = estimator._state_from_nodes(points)
-    raw_bend, _ = estimator.energy.grad_hess_energy_linear_elastic(state)
+    if isinstance(estimator.energy, TriangleEnergy):
+        # Bypass the zero-reference calibration to inspect the raw gradient.
+        raw_bend, _ = estimator.energy._compute_grad_hess(state)
+    else:
+        raw_bend, _ = estimator.energy.grad_hess_energy_linear_elastic(state)
     raw_stretch, _ = estimator.stretch_energy.grad_hess_energy_linear_elastic(state)
     calibrated = estimator.elastic_force(points)
 

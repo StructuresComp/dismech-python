@@ -85,8 +85,8 @@ class VisuoShellForceEstimator:
         """Return the reference-calibrated elastic force at each tracked node."""
         nodes = _validate_nodes(nodes, self.n_nodes)
         state = self._state_from_nodes(nodes)
-        bend_force, _ = self.energy.grad_hess_energy_linear_elastic(state)
-        stretch_force, _ = self.stretch_energy.grad_hess_energy_linear_elastic(state)
+        bend_force = self.energy.grad_energy_linear_elastic(state)
+        stretch_force = self.stretch_energy.grad_energy_linear_elastic(state)
         force = bend_force + stretch_force
         return force[: 3 * self.n_nodes].reshape(-1, 3)
 

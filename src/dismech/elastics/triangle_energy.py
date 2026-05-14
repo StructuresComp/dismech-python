@@ -257,6 +257,17 @@ class TriangleEnergy(ElasticEnergy):
         Fs = Fs - self._reference_force
         return Fs, Js
 
+    def grad_energy_linear_elastic(self, state: RobotState) -> np.ndarray:
+        """Force-only path: returns Fs without assembling the Hessian.
+
+        Skips the (N, 9, 9) per-triangle Hessian, the ddelfi tensor, and the
+        dense `(n_dof, n_dof)` allocation done by `_compute_grad_hess`. Use
+        this when only the elastic force is needed (e.g. VisuoShell force
+        estimation across many frames).
+        """
+        Fs = self._compute_grad(state)
+        return Fs - self._reference_force
+
     def _compute_energy(self, state: RobotState) -> np.ndarray:
         tau = self._get_tau(state.tau)
         xis = self._get_xi_is(state.q)
@@ -304,6 +315,70 @@ class TriangleEnergy(ElasticEnergy):
         e2 = compute_e(t_norms_sq_sq, ls_sq_ls_sq, t_norms_sq_ls_sq)
 
         return self._kb * ((1-self._nu) * e1 + self._nu*e2) * self._A
+
+    def _compute_grad(self, state: RobotState) -> np.ndarray:
+        """Gradient-only counterpart to `_compute_grad_hess`.
+
+        Identical math for the force terms; the Hessian-only pieces
+        (ddelfi, delfi_sq, dpdp, dxdp, dxdx, hess_e*, and the dense Js
+        allocation) are omitted.
+        """
+        tau = self._get_tau(state.tau)
+        xis = self._get_xi_is(state.q)
+        t, f, c, unit_norm, A = self._get_t_f_c(state.q, tau)
+
+        s_xis = self._s_s * xis - f
+        s_initxis = self._s_s * self._init_xis - self._init_fs
+
+        ci_cj = np.einsum('ni, nj->nij', c, c)
+        ci_init_cj = np.einsum('ni, nj->nij', c, self._init_cs)
+
+        ci_sj = 2 * np.einsum('ni,ni->ni', c, self._s_s)[:, None, :]
+
+        t_dot_t = np.einsum('nij,nik->njk', t, t)
+        t_dot_init_t = np.einsum('nij,nik->njk', t, self._init_ts)
+        t_dot_t_sq = t_dot_t ** 2
+        t_dot_init_t_sq = t_dot_init_t ** 2
+
+        t_norm_sq = np.diagonal(t_dot_t, axis1=1, axis2=2)
+        t_norms_sq_sq = np.einsum('ni,nj->nij', t_norm_sq, t_norm_sq)
+        t_norms_sq_ls_sq = np.einsum('ni,nj->nij', t_norm_sq, self._ls**2)
+
+        delfi = self._delfi_by_delpk(t, tau, unit_norm, A)
+
+        s_xis_i = s_xis[:, :, None]
+        s_xis_j = s_xis[:, None, :]
+        s_initxis_i = s_initxis[:, :, None]
+        s_initxis_j = s_initxis[:, None, :]
+
+        dp_coeff_1 = -ci_cj * s_xis_i
+        dp_coeff_2 = -ci_cj * s_xis_j
+        dp_coeff_3 = 2 * ci_init_cj * s_initxis_j
+
+        dp_1 = compute_dp_jit(dp_coeff_1, dp_coeff_2,
+                              dp_coeff_3, t_dot_t_sq, t_dot_init_t_sq, delfi)
+        dp_2 = compute_dp_jit(dp_coeff_1, dp_coeff_2,
+                              dp_coeff_3, t_norms_sq_sq, t_norms_sq_ls_sq, delfi)
+
+        dx_coeff_1 = ci_sj * c[:, :, None] * s_xis_i
+        dx_coeff_2 = -ci_sj * self._init_cs[:, :, None] * s_initxis_i
+
+        def compute_dx(factor1, factor2):
+            return np.sum(dx_coeff_1 * factor1 + dx_coeff_2 * factor2, axis=1)
+        dx_1 = compute_dx(t_dot_t_sq, t_dot_init_t_sq)
+        dx_2 = compute_dx(t_norms_sq_sq, t_norms_sq_ls_sq)
+
+        grad_e1 = np.hstack([dp_1, dx_1])
+        grad_e2 = np.hstack([dp_2, dx_2])
+
+        gradE_with_stiff = self._kb[..., None] * \
+            ((1-self._nu)[..., None] * grad_e1 +
+             self._nu[..., None]*grad_e2) * self._A[..., None]
+
+        n_dof = state.q.shape[0]
+        Fs = np.zeros(n_dof)
+        np.add.at(Fs, self._ind, -gradE_with_stiff)
+        return Fs
 
     def _compute_grad_hess(self, state: RobotState, sparse=False) -> typing.Tuple[np.ndarray, np.ndarray]:
         tau = self._get_tau(state.tau)

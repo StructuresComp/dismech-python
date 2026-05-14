@@ -43,3 +43,8 @@ class SimParams:
     use_predictor_corrector_for_ground_contact: bool = False
     no_future_freeing_after_ground_contact: bool = False
     frictionless_pc_contact: bool = False
+    # If True, the predictor-corrector uses the sign of the normal reaction
+    # force at each predictor-pinned z-DOF (read from the converged residual)
+    # to decide release, instead of the velocity-based slip-speed test. See
+    # predictor_corrector_ground_contact_force_based.py.
+    force_based_release_for_ground_contact: bool = False

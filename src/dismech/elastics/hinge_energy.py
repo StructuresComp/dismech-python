@@ -34,6 +34,52 @@ class HingeEnergy(ElasticEnergy):
 
         return (angle * sign).squeeze(1)
 
+    def grad_strain(self, state: RobotState) -> np.ndarray:
+        """Force-only path: skip the 12x12 per-hinge Hessian assembly."""
+        n0p, n1p, n2p, n3p = self._get_node_pos(state.q)
+        N = n0p.shape[0]
+
+        m_e0 = n1p - n0p
+        m_e1 = n2p - n0p
+        m_e2 = n3p - n0p
+        m_e3 = n2p - n1p
+        m_e4 = n3p - n1p
+
+        norm_e0 = np.linalg.norm(m_e0, axis=-1, keepdims=True)
+        norm_e1 = np.linalg.norm(m_e1, axis=-1, keepdims=True)
+        norm_e2 = np.linalg.norm(m_e2, axis=-1, keepdims=True)
+        norm_e3 = np.linalg.norm(m_e3, axis=-1, keepdims=True)
+        norm_e4 = np.linalg.norm(m_e4, axis=-1, keepdims=True)
+
+        cosA1 = np.sum(m_e0 * m_e1, axis=-1, keepdims=True) / (norm_e0 * norm_e1)
+        cosA2 = np.sum(m_e0 * m_e2, axis=-1, keepdims=True) / (norm_e0 * norm_e2)
+        cosA3 = np.sum(-m_e0 * m_e3, axis=-1, keepdims=True) / (norm_e0 * norm_e3)
+        cosA4 = np.sum(-m_e0 * m_e4, axis=-1, keepdims=True) / (norm_e0 * norm_e4)
+
+        sinA1 = np.linalg.norm(np.cross(m_e0, m_e1, axis=-1), axis=-1, keepdims=True) / (norm_e0 * norm_e1)
+        sinA2 = np.linalg.norm(np.cross(m_e0, m_e2, axis=-1), axis=-1, keepdims=True) / (norm_e0 * norm_e2)
+        sinA3 = np.linalg.norm(np.cross(m_e0, m_e3, axis=-1), axis=-1, keepdims=True) / (-norm_e0 * norm_e3)
+        sinA4 = np.linalg.norm(np.cross(m_e0, m_e4, axis=-1), axis=-1, keepdims=True) / (-norm_e0 * norm_e4)
+
+        nn1 = np.cross(m_e0, m_e3, axis=-1)
+        nn1 /= np.linalg.norm(nn1, axis=-1, keepdims=True)
+        nn2 = -np.cross(m_e0, m_e4, axis=-1)
+        nn2 /= np.linalg.norm(nn2, axis=-1, keepdims=True)
+
+        h1 = norm_e0 * sinA1
+        h2 = norm_e0 * sinA2
+        h3 = -norm_e0 * sinA3
+        h4 = -norm_e0 * sinA4
+        h01 = norm_e1 * sinA1
+        h02 = norm_e2 * sinA2
+
+        grad_theta = np.zeros((N, 12), dtype=np.float64)
+        grad_theta[:, 0:3] = (cosA3 * nn1 / h3) + (cosA4 * nn2 / h4)
+        grad_theta[:, 3:6] = (cosA1 * nn1 / h1) + (cosA2 * nn2 / h2)
+        grad_theta[:, 6:9] = -nn1 / h01
+        grad_theta[:, 9:12] = -nn2 / h02
+        return grad_theta
+
     def grad_hess_strain(self, state: RobotState) -> typing.Tuple[np.ndarray, np.ndarray]:
         n0p, n1p, n2p, n3p = self._get_node_pos(state.q)
         N = n0p.shape[0]

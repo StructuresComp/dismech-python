@@ -8,13 +8,13 @@ import numpy as np
 from ..soft_robot import SoftRobot
 from ..state import RobotState
 from ..elastics import ElasticEnergy, StretchEnergy, HingeEnergy, BendEnergy, TriangleEnergy, TwistEnergy
-from ..external_forces import compute_gravity_forces, compute_aerodynamic_forces_vectorized, compute_ground_contact, compute_ground_contact_friction, compute_rft, compute_damping_force, compute_surface_viscous_drag, compute_thrust_force_and_jacobian, add_point_forces, predictor_step_for_ground_contact, corrector_step_for_ground_contact
-from ..solvers import Solver, NumpySolver, PardisoSolver
+from ..external_forces import compute_gravity_forces, compute_aerodynamic_forces_vectorized, compute_ground_contact, compute_ground_contact_friction, compute_rft, compute_damping_force, compute_surface_viscous_drag, compute_thrust_force_and_jacobian, add_point_forces, predictor_step_for_ground_contact, corrector_step_for_ground_contact, corrector_step_for_ground_contact_force_based
+from ..solvers import Solver, NumpySolver, PardisoSolver, RobustSolver
 from ..visualizer import Visualizer
 from ..contact import IMCEnergy, ShellContactEnergy, IMCFrictionEnergy
 
 _SOLVERS: typing.Dict[str, Solver] = {
-    'np': NumpySolver, 'pardiso': PardisoSolver}
+    'np': NumpySolver, 'pardiso': PardisoSolver, 'robust': RobustSolver}
 
 
 STRETCH = 'stretch'
@@ -77,6 +77,31 @@ class TimeStepper(metaclass=abc.ABCMeta):
         # Simulate callbacks
         self.before_step = None
 
+        # Adaptive time-stepping. Off by default so existing simulate behavior
+        # is unchanged. When adaptive_dt=True, simulate() escalates
+        # RobustSolver regularization on Newton non-convergence and falls back
+        # to dt reduction if regularization isn't enough. After a stable step,
+        # dt is allowed to grow back up to max_dt.
+        #
+        # max_dq_threshold controls an OPTIONAL second trigger: if set to a
+        # finite value, simulate() also retries with smaller dt whenever the
+        # largest Newton step in an iteration exceeds the threshold. Default
+        # is +inf (disabled) — the first Newton step typically equals the
+        # full physical displacement per timestep, so a threshold derived
+        # from convergence tolerance would fire on every step. Set this to
+        # something physically meaningful for your mesh (e.g. 1% of edge
+        # length) if you want CFL-style displacement control.
+        self.adaptive_dt = False
+        self.max_dq_threshold = np.inf   # disabled by default
+        self.dt_reduction_factor = 0.5
+        self.dt_increase_factor = 1.2
+        self.min_dt = None             # None -> original_dt / 100
+        self.max_dt = None             # None -> original_dt * 2
+        self.max_dt_reductions = 5
+        # Populated by _solve_step on each call.
+        self._last_max_dq: float = 0.0
+        self._last_initial_dq: float = 0.0
+
         # Contact-force bookkeeping. _contact_z_dofs is the cumulative set of
         # z-DOF indices pinned to the ground by the predictor (and not yet
         # released by the corrector); predictor adds, corrector removals are
@@ -96,6 +121,14 @@ class TimeStepper(metaclass=abc.ABCMeta):
     def simulate(self, robot: SoftRobot = None, viz: Visualizer = None) -> typing.Tuple[typing.List[SoftRobot], typing.List[float], typing.List[float], typing.List[np.ndarray]]:
         robot = robot or self.robot
         steps = int(robot.sim_params.total_time / robot.sim_params.dt) + 1
+
+        # Adaptive-dt defaults (only meaningful when self.adaptive_dt is True).
+        original_dt = robot.sim_params.dt
+        if self.adaptive_dt:
+            if self.min_dt is None:
+                self.min_dt = original_dt / 100.0
+            if self.max_dt is None:
+                self.max_dt = original_dt * 2.0
 
         if viz is not None:
             viz.update(robot, 0)
@@ -120,16 +153,19 @@ class TimeStepper(metaclass=abc.ABCMeta):
             if self.before_step is not None:
                 robot = self.before_step(robot, i * robot.sim_params.dt)
 
-            try:
-                robot, f_norm, F = self.step(robot)
-            except Exception as e:
-                print("Error occurred during simulation step:", e)
-                robot.sim_params.dt *= 0.1
-                print("Reducing time step to:", robot.sim_params.dt)
-                robot, f_norm, F = self.step(robot)
+            robot, f_norm, F = self._adaptive_step(robot)
 
             i += 1
             t += robot.sim_params.dt
+
+            # If the last step was very smooth, allow dt to drift back up.
+            # Only meaningful when the user has set a finite max_dq_threshold;
+            # without one, we have no signal that the step was "easy".
+            if (self.adaptive_dt
+                    and np.isfinite(self.max_dq_threshold)
+                    and self._last_initial_dq < self.max_dq_threshold * 0.1):
+                robot.sim_params.dt = min(
+                    self.max_dt, robot.sim_params.dt * self.dt_increase_factor)
 
             # Update on step interval
             if viz is not None and i % robot.sim_params.plot_step == 0:
@@ -144,6 +180,99 @@ class TimeStepper(metaclass=abc.ABCMeta):
             # print current time
             print("current_time: ", t)
         return ret, time_array, f_norms, Fs
+
+    def _adaptive_step(self, robot: SoftRobot) -> typing.Tuple[SoftRobot, float, np.ndarray]:
+        """Wrap step() with optional dt reduction and solver regularization escalation.
+
+        Non-adaptive path preserves the legacy behavior: try once, on any
+        exception scale dt by 0.1 and retry once.
+
+        Adaptive path: deepcopy robot + contact bookkeeping, then loop —
+          - if step succeeds with max_dq <= threshold, accept and reset solver reg;
+          - if step succeeds but max_dq is too large, shrink dt and retry;
+          - if step raises RuntimeError (Newton non-convergence), first try
+            escalating RobustSolver regularization (up to 2 levels), then shrink dt.
+        Bails out with RuntimeError once min_dt is hit or max_dt_reductions
+        is exhausted.
+        """
+        if not self.adaptive_dt:
+            try:
+                return self.step(robot)
+            except Exception as e:
+                print("Error occurred during simulation step:", e)
+                robot.sim_params.dt *= 0.1
+                print("Reducing time step to:", robot.sim_params.dt)
+                return self.step(robot)
+
+        # Lightweight backup. The only state step() mutates in place on the
+        # input robot is robot.state.q (the predictor snaps penetrating z-DOFs
+        # via in-place write). step() returns a new robot for everything else,
+        # which we just discard on retry. sim_params.dt and _contact_z_dofs are
+        # mutated by this method itself.
+        q_backup = robot.state.q.copy()
+        contact_z_backup = self._contact_z_dofs.copy()
+        reg_escalations = 0
+        attempt = 0
+
+        def restore():
+            robot.state.q[:] = q_backup
+            self._contact_z_dofs = contact_z_backup.copy()
+
+        while attempt <= self.max_dt_reductions:
+            try:
+                result = self.step(robot)
+                max_dq = self._last_max_dq
+
+                if max_dq <= self.max_dq_threshold:
+                    if hasattr(self._solver, 'reset_regularization'):
+                        self._solver.reset_regularization()
+                    return result
+
+                # Step converged but the displacement was too large; back off.
+                new_dt = max(self.min_dt,
+                             robot.sim_params.dt * self.dt_reduction_factor)
+                if new_dt >= robot.sim_params.dt * 0.99:
+                    # Already at min_dt; accept the step rather than spin.
+                    if hasattr(self._solver, 'reset_regularization'):
+                        self._solver.reset_regularization()
+                    return result
+
+                print(f"max_dq={max_dq:.3e} > threshold={self.max_dq_threshold:.3e}; "
+                      f"reducing dt {robot.sim_params.dt:.3e} -> {new_dt:.3e}")
+                restore()
+                robot.sim_params.dt = new_dt
+                attempt += 1
+
+            except RuntimeError as e:
+                # Newton non-convergence. Try escalating the solver's
+                # regularization cap before giving up dt.
+                if (reg_escalations < 2 and
+                        hasattr(self._solver, 'increase_regularization')):
+                    reg_escalations += 1
+                    self._solver.increase_regularization(
+                        factor=10.0 ** reg_escalations)
+                    print(f"Newton non-convergence; escalating solver "
+                          f"regularization (level {reg_escalations}): {e}")
+                    restore()
+                    continue
+
+                # Fall back to dt reduction.
+                new_dt = max(self.min_dt,
+                             robot.sim_params.dt * self.dt_reduction_factor)
+                if new_dt >= robot.sim_params.dt * 0.99:
+                    raise RuntimeError(
+                        f"Step failed at min_dt={self.min_dt:.3e}: {e}") from e
+
+                print(f"Newton non-convergence; reducing dt "
+                      f"{robot.sim_params.dt:.3e} -> {new_dt:.3e}: {e}")
+                restore()
+                robot.sim_params.dt = new_dt
+                if hasattr(self._solver, 'reset_regularization'):
+                    self._solver.reset_regularization()
+                attempt += 1
+
+        raise RuntimeError(
+            f"Step failed after {self.max_dt_reductions} dt reductions")
 
     def step(self, robot: SoftRobot = None, debug: bool = True) -> typing.Tuple[SoftRobot, float, np.ndarray]:
         robot = robot or self.robot
@@ -167,10 +296,20 @@ class TimeStepper(metaclass=abc.ABCMeta):
                 # grows monotonically. With the default behavior, sliding
                 # nodes' z-DOFs are released and drop out of the set.
                 fixed_before = robot.fixed_dof.copy()
-                robot = corrector_step_for_ground_contact(
-                    robot, q, vertically_constrained_nodes,
-                    no_future_freeing=robot.sim_params.no_future_freeing_after_ground_contact,
-                    frictionless=robot.sim_params.frictionless_pc_contact)
+                if robot.sim_params.force_based_release_for_ground_contact:
+                    # F (residual at the converged constrained q) is the
+                    # reaction force on every fixed DOF — exactly what the
+                    # force-based corrector needs to read at the predictor-
+                    # pinned z-DOFs.
+                    robot = corrector_step_for_ground_contact_force_based(
+                        robot, F, vertically_constrained_nodes,
+                        no_future_freeing=robot.sim_params.no_future_freeing_after_ground_contact,
+                        frictionless=robot.sim_params.frictionless_pc_contact)
+                else:
+                    robot = corrector_step_for_ground_contact(
+                        robot, q, vertically_constrained_nodes,
+                        no_future_freeing=robot.sim_params.no_future_freeing_after_ground_contact,
+                        frictionless=robot.sim_params.frictionless_pc_contact)
                 removed = np.setdiff1d(fixed_before, robot.fixed_dof)
                 self._contact_z_dofs = np.setdiff1d(
                     self._contact_z_dofs, removed)
@@ -231,6 +370,8 @@ class TimeStepper(metaclass=abc.ABCMeta):
         iteration = 1
         err_history = []
         solved = False
+        max_dq = 0.0
+        initial_dq = None
 
         while not solved:
             F, J = self._compute_residual_at(
@@ -267,6 +408,13 @@ class TimeStepper(metaclass=abc.ABCMeta):
             dq_free *= alpha
             q[robot.state.free_dof] -= dq_free
 
+            # Track displacement magnitudes for adaptive dt control.
+            if dq_free.size > 0:
+                dq_magnitude = float(np.max(np.abs(dq_free)))
+                max_dq = max(max_dq, dq_magnitude)
+                if initial_dq is None:
+                    initial_dq = dq_magnitude
+
             # Error and convergence
             err = np.linalg.norm(f_free)
             err_history.append(err)
@@ -278,8 +426,11 @@ class TimeStepper(metaclass=abc.ABCMeta):
                 print("iter: {}, error: {:.3f}".format(iteration, err))
             iteration += 1
 
+        self._last_max_dq = max_dq
+        self._last_initial_dq = initial_dq if initial_dq is not None else 0.0
+
         if iteration >= robot.sim_params.max_iter:
-            raise ValueError(
+            raise RuntimeError(
                 "Iteration limit {} reached before convergence".format(robot.sim_params.max_iter))
 
         # Re-evaluate F at the converged q. The in-loop F was computed at the

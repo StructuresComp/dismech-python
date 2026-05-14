@@ -54,6 +54,55 @@ class BendEnergy(ElasticEnergy):
 
         return np.stack([kappa1, kappa2], axis=-1)
 
+    def grad_strain(self, state: RobotState) -> np.ndarray:
+        """Force-only path: skip the 11x11x2 per-spring Hessian assembly."""
+        n0p, n1p, n2p = self._get_node_pos(state.q)
+        m1e, m2e, m1f, m2f = self._get_adjusted_material_directors(
+            state.m1, state.m2)
+        n_springs = n0p.shape[0]
+
+        ee = n1p - n0p
+        ef = n2p - n1p
+        norm_e = np.linalg.norm(ee, axis=1)
+        norm_f = np.linalg.norm(ef, axis=1)
+        te = ee / norm_e[:, None]
+        tf = ef / norm_f[:, None]
+
+        chi = 1.0 + np.sum(te * tf, axis=1)
+        chi_inv = 1.0 / chi
+        kb = 2.0 * np.cross(te, tf) * chi_inv[:, None]
+
+        tilde_t = (te + tf) * chi_inv[:, None]
+        tilde_d1 = (m1e + m1f) * chi_inv[:, None]
+        tilde_d2 = (m2e + m2f) * chi_inv[:, None]
+
+        kappa1 = 0.5 * np.sum(kb * (m2e + m2f), axis=1)
+        kappa2 = -0.5 * np.sum(kb * (m1e + m1f), axis=1)
+
+        Dkappa1De = (1.0 / norm_e[:, None]) * \
+            (-kappa1[:, None] * tilde_t + np.cross(tf, tilde_d2))
+        Dkappa1Df = (1.0 / norm_f[:, None]) * \
+            (-kappa1[:, None] * tilde_t - np.cross(te, tilde_d2))
+        Dkappa2De = (1.0 / norm_e[:, None]) * \
+            (-kappa2[:, None] * tilde_t - np.cross(tf, tilde_d1))
+        Dkappa2Df = (1.0 / norm_f[:, None]) * \
+            (-kappa2[:, None] * tilde_t + np.cross(te, tilde_d1))
+
+        gradKappa = np.zeros((n_springs, 11, 2))
+        gradKappa[:, 0:3, 0] = -Dkappa1De
+        gradKappa[:, 3:6, 0] = Dkappa1De - Dkappa1Df
+        gradKappa[:, 6:9, 0] = Dkappa1Df
+        gradKappa[:, 0:3, 1] = -Dkappa2De
+        gradKappa[:, 3:6, 1] = Dkappa2De - Dkappa2Df
+        gradKappa[:, 6:9, 1] = Dkappa2Df
+
+        gradKappa[:, 9, 0] = -0.5 * np.sum(kb * m1e, axis=1)
+        gradKappa[:, 10, 0] = -0.5 * np.sum(kb * m1f, axis=1)
+        gradKappa[:, 9, 1] = -0.5 * np.sum(kb * m2e, axis=1)
+        gradKappa[:, 10, 1] = -0.5 * np.sum(kb * m2f, axis=1)
+
+        return gradKappa
+
     def grad_hess_strain(self, state: RobotState) -> typing.Tuple[np.ndarray, np.ndarray]:
         n0p, n1p, n2p = self._get_node_pos(state.q)
         m1e, m2e, m1f, m2f = self._get_adjusted_material_directors(

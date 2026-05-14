@@ -22,13 +22,21 @@ def compute_ground_contact(robot: SoftRobot, q: np.ndarray, as_raw=False) -> typ
     if active_indices.size == 0:
         return np.zeros_like(q), np.zeros((q.shape[0], q.shape[0]))
 
-    # Compute force and stiffness only for active points
+    # Compute force and stiffness only for active points.
+    # The penalty is built from v = exp(-K1 * dist), which overflows for deep
+    # penetration. Rewrite using r = v/(v+1) = sigmoid(-K1*dist) and
+    # log(v+1) = softplus(-K1*dist); both are bounded and overflow-free,
+    # and r, (1-r), and softplus capture every appearance of v in the
+    # original f_raw / j_raw formulas (1/(v+1) = 1-r).
     K1 = 15 / robot.env.ground_delta
-    v = np.exp(-K1 * active_dist)
-    f_raw = (-2 * v * np.log(v + 1)) / \
-        (K1 * (v + 1)) * robot.env.ground_stiffness
-    j_raw = (2 * v * np.log(v + 1) + 2 * v ** 2) / \
-        ((v + 1) ** 2) * robot.env.ground_stiffness
+    x = -K1 * active_dist
+    abs_x = np.abs(x)
+    r = 0.5 * (1.0 + np.tanh(0.5 * x))           # = v/(v+1), in [0, 1]
+    softplus_x = np.maximum(x, 0.0) + np.log1p(np.exp(-abs_x))  # = log(v+1)
+    one_minus_r = 1.0 - r                         # = 1/(v+1)
+    f_raw = -2.0 / K1 * r * softplus_x * robot.env.ground_stiffness
+    j_raw = 2.0 * (r * one_minus_r * softplus_x + r * r) \
+        * robot.env.ground_stiffness
 
     if as_raw:
         f_full = np.zeros((f_raw.shape[0], 3))

@@ -36,7 +36,12 @@ class Springs(metaclass=abc.ABCMeta):
         return SpringView
 
     def __getattr__(self, name):
-        if name in self._fields:
+        # Read _fields via __dict__ so we don't recurse when called on a
+        # half-built instance (e.g., during copy.deepcopy / unpickling, before
+        # __init__ has set _fields). hasattr(y, '__setstate__') was triggering
+        # an infinite recursion here.
+        fields = self.__dict__.get('_fields')
+        if fields is not None and name in fields:
             return self._data[name]
         raise AttributeError(
             f"{type(self).__name__} has no attribute '{name}'")

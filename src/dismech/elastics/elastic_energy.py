@@ -71,10 +71,44 @@ class ElasticEnergy(metaclass=PostInitABCMeta):
         energy = 0.5 * self.K.reshape(-1, self._n_K) * del_strain**2
         return np.sum(energy) if output_scalar else energy
 
+    def grad_strain(self, state: RobotState) -> np.ndarray:
+        """Return only the gradient of strain wrt DOFs.
+
+        Default implementation discards the Hessian from `grad_hess_strain`.
+        Subclasses can override to skip Hessian computation entirely for a
+        speed/memory win when only the force is needed.
+        """
+        return self.grad_hess_strain(state)[0]
+
+    def grad_energy_linear_elastic(self, state: RobotState) -> np.ndarray:
+        """Force-only path: assemble Fs without computing the Hessian.
+
+        Mirrors `grad_hess_energy_linear_elastic` but skips all Hessian work
+        (no `(n_dof, n_dof)` allocation, no outer products, no `hess_strain`).
+        Existing callers that need J should keep using
+        `grad_hess_energy_linear_elastic`.
+        """
+        del_strain = self._get_del_strain(state)
+        grad_strain = self.grad_strain(state)
+
+        K = self.K.reshape(-1, self._n_K)
+        gradE_strain = (K * del_strain).reshape(-1, self._n_K)
+        grad_strain = grad_strain.reshape(-1, grad_strain.shape[1], self._n_K)
+
+        grad_energy = np.sum(gradE_strain[:, None, :] * grad_strain, axis=-1)
+
+        if hasattr(self, '_sign_grad'):
+            grad_energy *= self._sign_grad
+
+        n_dof = state.q.shape[0]
+        Fs = np.zeros(n_dof)
+        np.add.at(Fs, self._springs.ind, -grad_energy)
+        return Fs
+
     def grad_hess_energy_linear_elastic(self, state: RobotState, sparse: bool = False) -> typing.Tuple[np.ndarray, np.ndarray] | typing.Tuple[np.ndarray, sp.csr_array]:
         """Compute gradient and Hessian of elastic energy as a function of strain.
           Uses the chain rule to get derivative wrt dofs."""
-        
+
         del_strain = self._get_del_strain(state)
         grad_strain, hess_strain = self.grad_hess_strain(state)
 

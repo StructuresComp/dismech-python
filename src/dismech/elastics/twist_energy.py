@@ -32,6 +32,30 @@ class TwistEnergy(ElasticEnergy):
         theta_e, theta_f = self._get_thetas(state.q)
         return theta_f - theta_e + state.ref_twist
 
+    def grad_strain(self, state: RobotState) -> np.ndarray:
+        """Force-only path: skip the 11x11 per-spring Hessian assembly."""
+        n0p, n1p, n2p = self._get_node_pos(state.q)
+        N = n0p.shape[0]
+
+        ee = n1p - n0p
+        ef = n2p - n1p
+
+        norm_e = np.linalg.norm(ee, axis=1, keepdims=True)
+        norm_f = np.linalg.norm(ef, axis=1, keepdims=True)
+        te = ee / norm_e
+        tf = ef / norm_f
+
+        chi = 1.0 + np.sum(te * tf, axis=1, keepdims=True)
+        kb = 2.0 * np.cross(te, tf, axis=1) / chi
+
+        grad_twist = np.zeros((N, 11))
+        grad_twist[:, 0:3] = (-0.5 / norm_e) * kb
+        grad_twist[:, 6:9] = (0.5 / norm_f) * kb
+        grad_twist[:, 3:6] = - (grad_twist[:, 0:3] + grad_twist[:, 6:9])
+        grad_twist[:, 9] = -1.0
+        grad_twist[:, 10] = 1.0
+        return grad_twist
+
     def grad_hess_strain(self, state: RobotState) -> typing.Tuple[np.ndarray, np.ndarray]:
         n0p, n1p, n2p = self._get_node_pos(state.q)
 

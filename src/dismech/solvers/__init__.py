@@ -1,1 +1,1 @@
-from .solver import Solver, NumpySolver, PardisoSolver
+from .solver import Solver, NumpySolver, PardisoSolver, RobustSolver

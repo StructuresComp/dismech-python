@@ -17,7 +17,7 @@ class Geometry:
     def __init__(self,
                  nodes: np.ndarray,
                  edges: np.ndarray,
-                 face_nodes: np.ndarray, plot_from_txt: bool = True):
+                 face_nodes: np.ndarray, plot_from_txt: bool = False):
         """
         acts as createGeometry.m
         """

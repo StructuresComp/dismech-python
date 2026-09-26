@@ -14,8 +14,8 @@ def rel_path(fname: str) -> pathlib.Path:
 def test_static_sim_shell_cantilever_n51(time_stepper_rod_cantilever_n51):
     stepper = time_stepper_rod_cantilever_n51
     stepper.robot.env.set_static()
-    robots = stepper.simulate()
-    qs = np.stack([robot.state.q for robot in robots])
+    robots, _, _, _ = stepper.simulate()
+    qs = np.stack([robot.state.q for robot in robots[2:]])
 
     valid_data = scipy.io.loadmat(
         rel_path('resources/rod_cantilever/rod_cantilever_n51_static_sim.mat'))
@@ -26,8 +26,8 @@ def test_static_sim_shell_cantilever_n51(time_stepper_rod_cantilever_n51):
 def test_dynamic_sim_shell_cantilever_n40(time_stepper_shell_cantilever_n40):
     stepper = time_stepper_shell_cantilever_n40
     stepper.robot.sim_params.total_time = 0.4
-    robots = stepper.simulate()
-    qs = np.stack([robot.state.q for robot in robots])
+    robots, _, _, _ = stepper.simulate()
+    qs = np.stack([robot.state.q for robot in robots[1:]])
 
     valid_data = scipy.io.loadmat(
         rel_path('resources/shell_cantilever/shell_cantilever_n40_dynamic_sim.mat'))
@@ -37,8 +37,8 @@ def test_dynamic_sim_shell_cantilever_n40(time_stepper_shell_cantilever_n40):
 def test_dynamic_sim_contortion_n21(time_stepper_contortion_n21):
     stepper = time_stepper_contortion_n21
     stepper.robot.sim_params.total_time = 1.0
-    robots = stepper.simulate()
-    qs = np.stack([robot.state.q for robot in robots])
+    robots, _, _, _ = stepper.simulate()
+    qs = np.stack([robot.state.q for robot in robots[1:]])
 
     valid_data = scipy.io.loadmat(
         rel_path('resources/contortion/contortion_n21_dynamic_sim.mat'))

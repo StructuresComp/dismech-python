@@ -9,23 +9,12 @@ A discrete differential geometry based soft robot and deformable structure simul
 
 ## Setup
 
-To install this Python library within a new [virtual environment](https://docs.python.org/3/library/venv.html) execute the following bash commands. If you wish to use your own package manager (conda), only execute the commands after the comment. 
+We recommend using [uv](https://docs.astral.sh/uv/) to setup this package.
 
 ```bash
-python -m venv .venv
-source .venv/bin/activate           #.venv/Script/activate for Windows
-
-# after virtual environment setup
-pip install -r requirements.txt
-pip install -e .                    # Editable installation for development
-```
-
-## UV Setup
-
-This Python library has been updated to work with [uv](https://docs.astral.sh/uv/).
-
-```bash
-uv pip install -e . # automatically creates .venv
+git clone https://github.com/StructuresComp/dismech-python.git
+cd dismech-python
+uv pip install -e . # uv sync --extra pardiso for sparse solving
 ```
 
 ## Features

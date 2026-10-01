@@ -95,6 +95,11 @@ class ElasticEnergy(metaclass=PostInitABCMeta):
 
         hess_energy = hess_term1 + hess_term2
 
+        return self._assemble(grad_energy, hess_energy, state, sparse)
+
+    def _assemble(self, grad_energy: np.ndarray, hess_energy: np.ndarray, state: RobotState, sparse: bool = False):
+        """Scatter per-spring energy gradients (N, n_dof_stencil) and Hessians
+        (N, n_dof_stencil, n_dof_stencil) into global force and Jacobian."""
         # Sign correction
         if hasattr(self, '_sign_grad'):
             grad_energy *= self._sign_grad

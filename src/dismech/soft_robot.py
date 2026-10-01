@@ -1,6 +1,7 @@
 import copy
 import dataclasses
 import typing
+import warnings
 
 import numpy as np
 
@@ -10,7 +11,7 @@ from .frame_util import compute_reference_twist, compute_tfc_midedge, parallel_t
 from .environment import Environment
 from .geometry import Geometry
 from .params import GeomParams, Material, SimParams
-from .springs import StretchSprings, BendSprings, TwistSprings, HingeSprings, TriangleSpring
+from .springs import StretchSprings, BendSprings, TwistSprings, HingeSprings, TriangleSpring, LoveSprings, SanoSprings
 from .contact import ContactPair
 
 
@@ -148,6 +149,12 @@ class SoftRobot:
         self.__twist_springs = TwistSprings.from_arrays(
             geo.bend_twist_springs, geo.bend_twist_signs, GJ,
             self.ref_len, self.map_node_to_dof, self.map_edge_to_dof)
+
+        # Coil (Love) springs are opt-in via add_love_springs
+        self.__love_springs = LoveSprings(0, self.map_node_to_dof)
+
+        # Ribbon (Sano) springs are opt-in via add_sano_springs
+        self.__sano_springs = SanoSprings(0, self.map_node_to_dof)
 
         if self.__sim_params.use_mid_edge:
             # Triangle springs
@@ -387,6 +394,144 @@ class SoftRobot:
 
         return tangent
 
+    # Coil springs
+
+    def add_love_springs(self,
+                         coil_r: float | np.ndarray,
+                         pitch: float | np.ndarray,
+                         EI: float | np.ndarray,
+                         GJ: float | np.ndarray,
+                         triplets: typing.List[int] | np.ndarray | None = None,
+                         chirality: float | np.ndarray = 1.0,
+                         bend_EI: float | np.ndarray | None = None) -> "SoftRobot":
+        """
+        Model rod segments as helical coil springs (Love §271). Each selected
+        bend/twist triplet gets a LoveSpring coupling axial stretch and twist of
+        the coil axis. The rod stretch springs on the covered edges and the twist
+        springs on the selected triplets are disabled (zero stiffness), since the
+        coil law replaces them. Bending of the coil axis stays with the bend
+        springs; pass bend_EI to set it (e.g. an effective coil bending stiffness).
+
+        Args:
+            coil_r, pitch, EI, GJ: coil radius, pitch angle [rad], wire bending and
+                torsional stiffness. Scalars or one value per selected triplet.
+            triplets: indices into bend_springs/twist_springs (default: all).
+            chirality: +1 right-handed, -1 left-handed coil.
+            bend_EI: optional bending stiffness of the coil axis, scalar, (M,) or (M, 2).
+        """
+        bs, ss = self.__bend_springs, self.__stretch_springs
+        idx = self._triplet_selection(triplets)
+        M = idx.size
+
+        def per_spring(v):
+            return np.broadcast_to(np.asarray(v, dtype=np.float64), (M,)).copy()
+
+        new = copy.copy(self)
+        new.__love_springs = LoveSprings.from_arrays(
+            self._triplet_nodes_edge_ind(idx), bs.sgn[idx], idx,
+            self.__ref_len, self.map_node_to_dof, self.map_edge_to_dof,
+            coil_r=per_spring(coil_r), pitch=per_spring(pitch), EI=per_spring(EI),
+            GJ=per_spring(GJ), chirality=per_spring(chirality))
+
+        # Disable rod stretch on covered edges (matched by node pair)
+        covered = {tuple(sorted(pair)) for pair in self.__edges[np.unique(bs.edges_ind[idx])]}
+        EA = ss.EA.copy()
+        EA[[tuple(sorted(pair)) in covered for pair in ss.nodes_ind]] = 0.0
+        stretch = StretchSprings.from_arrays(ss.nodes_ind, ss.ref_len, EA, self.map_node_to_dof)
+        stretch.nat_strain, stretch.inc_strain = ss.nat_strain, ss.inc_strain
+        new.__stretch_springs = stretch
+
+        # Disable DER twist on the selected triplets
+        GJ_twist = self.__twist_springs.GJ.copy()
+        GJ_twist[idx] = 0.0
+        new.__twist_springs = self._twist_springs_with(GJ_twist)
+
+        if bend_EI is not None:
+            EI_bend = bs.EI.copy()
+            EI_bend[idx] = np.broadcast_to(np.asarray(bend_EI, dtype=np.float64).reshape(-1, 1)
+                                           if np.ndim(bend_EI) == 1 else bend_EI, (M, 2))
+            new.__bend_springs = self._bend_springs_with(EI_bend)
+
+        return new
+
+    # Ribbon springs
+
+    def add_sano_springs(self,
+                         zeta: float | np.ndarray,
+                         triplets: typing.List[int] | np.ndarray | None = None,
+                         EI: float | np.ndarray | None = None,
+                         GJ: float | np.ndarray | None = None) -> "SoftRobot":
+        """
+        Model rod segments as ribbons with Sano's regularized bend-twist coupling.
+        Each selected bend/twist triplet gets a SanoSpring carrying the full
+        Kirchhoff bending and twisting energy plus the coupling of easy-axis
+        (kappa2) bending and twist; the bend and twist springs on those triplets
+        are disabled (zero stiffness). Stretch stays with the stretch springs.
+        Natural strains set on the bend/twist springs carry over.
+
+        Args:
+            zeta: Sano regularization length. 0 recovers the Kirchhoff rod, large
+                values approach Sadowsky's ribbon. Scalar or one per triplet.
+            triplets: indices into bend_springs/twist_springs (default: all).
+            EI: (EI1, EI2) about the hard and easy axes, as a scalar, a pair (2,)
+                or per triplet (M, 2) (default: the bend springs' EI).
+            GJ: torsional stiffness, scalar or (M,) (default: the twist springs' GJ).
+        """
+        bs, ts = self.__bend_springs, self.__twist_springs
+        idx = self._triplet_selection(triplets)
+        M = idx.size
+
+        EI_s = bs.EI[idx].copy() if EI is None else \
+            np.broadcast_to(np.asarray(EI, dtype=np.float64), (M, 2)).copy()
+        GJ_s = ts.GJ[idx].copy() if GJ is None else             np.broadcast_to(np.asarray(GJ, dtype=np.float64), (M,)).copy()
+        if np.any(EI_s[:, 1] > EI_s[:, 0]):
+            warnings.warn("add_sano_springs couples twist with kappa2, which should be the "
+                          "easy axis, but EI2 > EI1 on some triplets.")
+
+        new = copy.copy(self)
+        sano = SanoSprings.from_arrays(
+            self._triplet_nodes_edge_ind(idx), bs.sgn[idx], idx,
+            self.__ref_len, self.map_node_to_dof, self.map_edge_to_dof,
+            EI=EI_s, GJ=GJ_s,
+            zeta=np.broadcast_to(np.asarray(zeta, dtype=np.float64), (M,)).copy())
+        sano.nat_strain = np.column_stack([bs.nat_strain[idx], ts.nat_strain[idx]])
+        sano.inc_strain = np.column_stack([bs.inc_strain[idx], ts.inc_strain[idx]])
+        new.__sano_springs = sano
+
+        # Disable DER bending and twist on the selected triplets
+        EI_bend = bs.EI.copy()
+        EI_bend[idx] = 0.0
+        new.__bend_springs = self._bend_springs_with(EI_bend)
+        GJ_twist = ts.GJ.copy()
+        GJ_twist[idx] = 0.0
+        new.__twist_springs = self._twist_springs_with(GJ_twist)
+
+        return new
+
+    def _triplet_selection(self, triplets) -> np.ndarray:
+        return np.arange(self.__bend_springs.N) if triplets is None else             np.asarray(triplets, dtype=np.int64)
+
+    def _triplet_nodes_edge_ind(self, sel) -> np.ndarray:
+        """[n0, e, n1, f, n2] of the selected bend/twist triplets."""
+        n, e = self.__bend_springs.nodes_ind[sel], self.__bend_springs.edges_ind[sel]
+        return np.stack([n[:, 0], e[:, 0], n[:, 1], e[:, 1], n[:, 2]], axis=1)
+
+    def _bend_springs_with(self, EI: np.ndarray) -> BendSprings:
+        """Copy of the bend springs with new stiffness, keeping natural strains."""
+        bs = self.__bend_springs
+        bend = BendSprings.from_arrays(self._triplet_nodes_edge_ind(np.arange(bs.N)), bs.sgn, EI,
+                                       self.__ref_len, self.map_node_to_dof, self.map_edge_to_dof)
+        bend.nat_strain, bend.inc_strain = bs.nat_strain, bs.inc_strain
+        return bend
+
+    def _twist_springs_with(self, GJ: np.ndarray) -> TwistSprings:
+        """Copy of the twist springs with new stiffness, keeping natural strains."""
+        ts = self.__twist_springs
+        twist = TwistSprings.from_arrays(self._triplet_nodes_edge_ind(np.arange(ts.N)), ts.sgn, GJ,
+                                         self.__ref_len, self.map_node_to_dof, self.map_edge_to_dof)
+        twist.nat_strain, twist.inc_strain = ts.nat_strain, ts.inc_strain
+        return twist
+
     # Fix/free nodes and edges
 
     def free_nodes(self, nodes: typing.List[int] | np.ndarray, axis: int | None = None, fix_edges: bool = True) -> "SoftRobot":
@@ -549,6 +694,16 @@ class SoftRobot:
     def twist_springs(self) -> TwistSprings:
         """List of bend-twist spring elements"""
         return self.__twist_springs
+
+    @property
+    def love_springs(self) -> LoveSprings:
+        """Helical coil (Love) spring elements"""
+        return self.__love_springs
+
+    @property
+    def sano_springs(self) -> SanoSprings:
+        """Ribbon (Sano) spring elements"""
+        return self.__sano_springs
 
     @property
     def stretch_springs(self) -> StretchSprings:

@@ -7,7 +7,7 @@ import numpy as np
 
 from ..soft_robot import SoftRobot
 from ..state import RobotState
-from ..elastics import ElasticEnergy, StretchEnergy, HingeEnergy, BendEnergy, TriangleEnergy, TwistEnergy
+from ..elastics import ElasticEnergy, StretchEnergy, HingeEnergy, BendEnergy, TriangleEnergy, TwistEnergy, LoveEnergy, SanoEnergy
 from ..external_forces import compute_gravity_forces, compute_aerodynamic_forces_vectorized, compute_ground_contact, compute_ground_contact_friction, compute_rft, compute_damping_force, compute_surface_viscous_drag, compute_thrust_force_and_jacobian, add_point_forces
 # from ..external_forces import predictor_step_for_ground_contact, corrector_step_for_ground_contact
 from ..solvers import Solver, NumpySolver, PardisoSolver
@@ -23,6 +23,8 @@ HINGE = 'hinge'
 MIDEDGE = 'triangle'
 BEND = 'bend'
 TWIST = 'twist'
+LOVE = 'love'
+SANO = 'sano'
 
 
 class TimeStepper(metaclass=abc.ABCMeta):
@@ -50,6 +52,12 @@ class TimeStepper(metaclass=abc.ABCMeta):
             if not robot.sim_params.two_d_sim:   # if 3d
                 self.elastic_energies[TWIST] = TwistEnergy(
                     robot.twist_springs, robot.state)
+        if robot.love_springs.N != 0:
+            self.elastic_energies[LOVE] = LoveEnergy(
+                robot.love_springs, robot.state)
+        if robot.sano_springs.N != 0:
+            self.elastic_energies[SANO] = SanoEnergy(
+                robot.sano_springs, robot.state)
 
         if "selfContact" in robot.env.ext_force_list:
             self._contact_energy = IMCEnergy(robot.contact_pairs, robot.env.delta, robot.env.h, robot.env.imc_stiffness)
